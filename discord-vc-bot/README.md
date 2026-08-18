@@ -5,7 +5,7 @@ A Discord bot for your server that:
 1. Reads normal chat messages and notices when someone says they're about to join voice chat — "omw, joining in 10 min", "be there at 9", "hopping on at 9:30pm", "be on in 10".
 2. Watches for that person actually joining a voice channel.
 3. Replies in the channel saying whether they were early, on time, or late — or, if they never show up at all, notes that they no-showed.
-4. Keeps score, so `/leaderboard` shows who's most punctual (and who ghosts) in the server over time.
+4. Keeps score, so `/leaderboard` shows who's most punctual (and who ghosts) in the server over time — or set up `/leaderboard-here` for a live scoreboard message that updates itself in a channel of your choice.
 
 No slash command is needed to make a plan — you just talk normally and the bot listens for it. This guide assumes you've never coded before and walks through every step. It'll take roughly 30–45 minutes the first time.
 
@@ -18,6 +18,7 @@ No slash command is needed to make a plan — you just talk normally and the bot
 - [Part 3 — Run it on your own computer](#part-3--run-it-on-your-own-computer)
 - [Part 4 — Keep it running 24/7 for free](#part-4--keep-it-running-247-for-free)
 - [How to talk to the bot](#how-to-talk-to-the-bot)
+- [Live leaderboard channel](#live-leaderboard-channel)
 - [Customizing](#customizing)
 - [Known limitations](#known-limitations)
 - [Troubleshooting](#troubleshooting)
@@ -99,7 +100,7 @@ In Discord, the bot should now show as online. Try it:
 - Type `omw, joining in 2 min` in a text channel the bot can see. It should react with a ⏰.
 - Join any voice channel within those 2 minutes. The bot should post a message saying whether you were early, on time, or late.
 - Type another plan, then reply `nvm` before joining. It should react with 🚫 instead, and stay quiet after.
-- Run `/leaderboard` and `/help` to see the slash commands.
+- Run `/leaderboard`, `/leaderboard-here`, and `/help` to see the slash commands.
 
 (No-shows take up to `PLAN_EXPIRY_HOURS` — 12 hours by default — to trigger, so you won't see one during a quick local test unless you leave the bot running that long. That's expected; see [Customizing](#customizing) if you'd rather use a shorter window.)
 
@@ -122,7 +123,9 @@ Render's free tier doesn't cost anything and doesn't ask for a card, but it puts
 1. **Put the code on GitHub** (Render deploys from a GitHub repository):
    - Create a free account at [github.com](https://github.com) if you don't have one.
    - Click **New repository**, name it (e.g. `discord-vc-bot`), keep it **Private**, and create it.
-   - On the repo page, use **uploading an existing file**, then drag your whole project folder in (everything except the `node_modules` folder and your `.env` file — don't upload `.env`, since it holds your secret token; you'll enter that directly in Render instead). Commit the upload.
+   - On the repo page, use **uploading an existing file**. Open your local `discord-vc-bot` folder in a second File Explorer/Finder window, select everything *inside* it (`src`, `test`, `README.md`, `package.json`, etc. — but not the `node_modules` folder or your `.env` file), and drag those selected items into the GitHub page.
+     - **Important:** drag the files and folders that are *inside* `discord-vc-bot`, not the `discord-vc-bot` folder itself. If you drag the folder itself, GitHub nests everything one level too deep and Render won't find `package.json` — if that happens, see the Troubleshooting entry below for the one-setting fix.
+   - Commit the upload.
 2. **Create the Render service:**
    - Sign up at [render.com](https://render.com) (using "Sign up with GitHub" is easiest — it connects the two automatically).
    - Click **New** → **Web Service**, and pick the repository you just created.
@@ -168,6 +171,16 @@ If it understood you, it reacts with ⏰ on your message. When you join a voice 
 
 **No-shows.** If you say you're joining but never actually do, the bot waits `PLAN_EXPIRY_HOURS` (default 12) hours past your stated time, then posts a note that you no-showed and stops tracking that plan. Cancel with "nevermind"/"nvm" beforehand to avoid that note entirely. No-shows are also logged (visible as a "👻 N no-shows" note next to your name in `/leaderboard` when you have any) but don't count against your on-time percentage.
 
+## Live leaderboard channel
+
+`/leaderboard` posts a one-off snapshot wherever you run it. If you'd rather have one message that keeps itself updated automatically — a permanent scoreboard in, say, a `#leaderboard` channel — go to that channel and run `/leaderboard-here`. The bot posts the leaderboard there and edits that same message in place every time someone joins voice or no-shows, instead of posting a new message each time.
+
+A few things worth knowing:
+- Only server members with the **Manage Server** permission can run `/leaderboard-here` (regular members won't see it in their command list) — that's intentional, so the channel can't be redirected by just anyone. If you want to allow other people, go to your server's **Settings → Integrations → [your bot's name]** and adjust who can use that specific command.
+- Running `/leaderboard-here` again in a *different* channel moves it there — the old post stops updating (it's left behind as a stale snapshot; delete it manually if you don't want it hanging around).
+- Running it again in the *same* channel just refreshes it immediately, no duplicate message.
+- If someone deletes the live message by hand, the bot notices next time it needs to update and posts a fresh one automatically.
+
 ## Customizing
 
 All settings live in your `.env` file:
@@ -179,6 +192,8 @@ All settings live in your `.env` file:
 | `GRACE_PERIOD_MINUTES` | `2` | +/- this many minutes still counts as "on time". |
 | `PLAN_EXPIRY_HOURS` | `12` | Hours after the *stated* join time before a never-followed-through-on plan is marked a no-show. |
 | `ALLOWED_CHANNEL_IDS` | *(blank = all channels)* | Comma-separated channel IDs to restrict message-scanning to specific channels. |
+| `DB_PATH` | `data/results.json` | Where leaderboard history is stored. Only worth changing to point at a persistent volume — see Part 4, Option B. |
+| `LIVE_LEADERBOARD_PATH` | `data/live-leaderboard.json` | Where the bot remembers the `/leaderboard-here` channel+message. Same deal as `DB_PATH`. |
 
 After changing `.env`, restart the bot (`Ctrl+C` then `npm start` again locally, or redeploy on your host) for changes to take effect.
 
@@ -192,6 +207,7 @@ Worth knowing about, in case behavior ever looks surprising:
 - **Natural language parsing isn't perfect.** It's tuned to avoid false positives (it won't fire on a random message that happens to contain a number), which means occasionally it'll miss an unusually-phrased plan. If you notice a common phrase it's not catching, that's an easy tweak to `src/timeParser.js`.
 - **Explicit weekday mentions are ignored on purpose** ("next Friday at 9pm") — this bot is meant for "joining very soon," not scheduling ahead.
 - **No-show checks happen every 5 minutes**, not the instant the window elapses — so a no-show note can land up to ~5 minutes after the `PLAN_EXPIRY_HOURS` cutoff.
+- **The `/leaderboard-here` channel resets the same way the leaderboard data does.** On a host without persistent storage (Render's free tier), a redeploy wipes which channel/message was tracked, same as it wipes the results themselves — you'll need to run `/leaderboard-here` again after a redeploy.
 
 ## Troubleshooting
 
@@ -207,8 +223,14 @@ Make sure the bot has permission to see the voice channel you joined (View Chann
 **`/leaderboard` or `/help` don't show up when I type `/`.**
 Slash commands register automatically each time the bot starts, per server — restart the bot once after inviting it, and make sure you invited it with the `applications.commands` scope (Part 2, step 3).
 
+**`/leaderboard-here` doesn't show up when I type `/`, but the other commands do.**
+It's restricted to members with the **Manage Server** permission by design (see [Live leaderboard channel](#live-leaderboard-channel)) — if that's not you, ask someone who has it, or have them adjust it in **Settings → Integrations**.
+
 **`npm install` fails.**
 Usually a Node.js version issue — confirm `node -v` shows v18 or higher. If you see a permissions error on macOS/Linux, avoid using `sudo`; instead search "fix npm permissions" for your OS, or reinstall Node.js via [nvm](https://github.com/nvm-sh/nvm).
 
 **Leaderboard data disappeared after a redeploy.**
 Expected on Render's free tier, which doesn't persist disk storage — see Part 4, Option A's trade-off note, or switch to Option B (Railway with a volume) if history matters to you.
+
+**Render build fails with `npm error code ENOENT ... Could not read package.json`.**
+The build log usually also shows something like `Using Node.js version ... via discord-vc-bot/package.json` just above the error — that `discord-vc-bot/` prefix is the giveaway. It means the GitHub upload nested everything one folder too deep (the `discord-vc-bot` folder itself got uploaded, instead of just its contents), so Render is looking for `package.json` in the repo's top level and only finding it one level down. Fastest fix, no re-upload needed: in the Render dashboard, open your service → **Settings** → scroll to **Build & Deploy** → **Root Directory** → **Edit** → type `discord-vc-bot` → **Save Changes**. Render will redeploy automatically; the build should succeed this time.
