@@ -1,0 +1,22 @@
+{
+  "name": "discord-vc-bot",
+  "version": "1.0.0",
+  "description": "Discord bot that reads chat messages for VC plans (e.g. \"joining at 9\") and reports whether people actually showed up on time.",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node test/timeParser.test.js && node test/core.test.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@napi-rs/canvas": "^1.0.6",
+    "chrono-node": "^2.10.1",
+    "discord.js": "^14.27.0",
+    "dotenv": "^17.4.2"
+  }
+}
