@@ -1,0 +1,8 @@
+node_modules/
+.env
+data/*.json
+data/*.json.tmp
+*.log
+
+# Personal ops notes (contains server IP / SSH details) — keep out of the public repo
+Update README.txt
