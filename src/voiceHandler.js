@@ -2,12 +2,13 @@
 // matches that against any pending plan for them, posts the verdict message,
 // and logs it for /leaderboard. Posts in the channel where the plan was
 // announced by default, or in a dedicated log channel instead if the server
-// set one up with /log-here - see chooseVerdictRouting below. Roast-worthy
-// lateness is the one exception: it always stays in the announcement
-// channel, /log-here or not - see chooseVerdictRouting's comment.
+// set one up with /log-here - see chooseVerdictRouting below. Callout-worthy
+// verdicts are the exception - roast-worthy lateness and absurdly-early
+// arrivals both always stay in the announcement channel, /log-here or not.
+// See chooseVerdictRouting's comment.
 const planTracker = require('./planTracker');
 const { recordResult } = require('./db');
-const { classify, isRoastWorthy, buildVerdictMessage } = require('./verdict');
+const { classify, isCalloutWorthy, buildVerdictMessage } = require('./verdict');
 const liveLeaderboard = require('./liveLeaderboard');
 const logChannelStore = require('./logChannelStore');
 
@@ -16,15 +17,16 @@ const logChannelStore = require('./logChannelStore');
 // inlined below) specifically so this branching is unit-testable without a
 // live Discord connection - see test/core.test.js.
 //
-// Roast-worthy lateness (see verdict.isRoastWorthy) is deliberately carved
-// out of the /log-here redirect: the whole point of a roast is being seen
-// live by the group, so it always posts (and pings, normally) in the
+// Callout-worthy verdicts (see verdict.isCalloutWorthy) are deliberately
+// carved out of the /log-here redirect: the whole point of a callout is being
+// seen live by the group, so it always posts (and pings, normally) in the
 // channel the plan was announced in, even on a server that's otherwise
-// routing every verdict message to a quiet log channel. Every other verdict
-// - on time, early, or late but under the roast threshold - is unaffected
-// and still redirects/goes silent exactly as /log-here promises.
+// routing every verdict message to a quiet log channel. That covers both
+// roast-worthy lateness and, since v17, absurdly-early arrivals. Every other
+// verdict - on time, or off by less than the relevant threshold - is
+// unaffected and still redirects/goes silent exactly as /log-here promises.
 function chooseVerdictRouting(verdict, { logChannelId, announceChannelId }) {
-  const redirectToLog = Boolean(logChannelId) && !isRoastWorthy(verdict);
+  const redirectToLog = Boolean(logChannelId) && !isCalloutWorthy(verdict);
   return {
     channelId: redirectToLog ? logChannelId : announceChannelId,
     suppressPing: redirectToLog,

@@ -42,10 +42,48 @@ const ROAST_LINES = [
   "So this is what {minutes} minutes of freedom looks like. Must be nice.",
 ];
 
+// The mirror image: lines for someone who turned up absurdly EARLY (see
+// config.js's EARLY_SCOLD_THRESHOLD_MINUTES). Saying "9" and appearing at 8
+// is its own small breach of your word - you still made everyone else work
+// off a time that turned out to be fiction - so it gets called out too,
+// rather than quietly counting as a good deed.
+//
+// Same {minutes} rule as above: it's swapped for how many minutes EARLY they
+// were, so write these as "{minutes} minutes early", never "late".
+const EARLY_SCOLD_LINES = [
+  "{minutes} minutes early. That's not punctuality, that's a different kind of lying.",
+  "You said a time. You did not honor that time. Early counts.",
+  "Showing up {minutes} minutes early is just being late to a plan you made up privately.",
+  "Integrity check: you gave us a time and then ignored it yourself.",
+  "Early by {minutes} minutes. The time you stated was, apparently, decorative.",
+  "Wow, {minutes} minutes early. Some of us scheduled our lives around your original claim.",
+  "Turning up this early is a stealth reschedule and we all know it.",
+  "You're early, which means the time you announced was fan fiction.",
+  "{minutes} minutes early — congratulations on being wrong in the other direction.",
+  "Punctual people arrive on time. You arrived on vibes.",
+  "Being {minutes} minutes early doesn't make you reliable, it makes you unpredictable.",
+  "You beat your own deadline by {minutes} minutes. Nobody asked you to.",
+  "That's not eagerness, that's a man who cannot read his own calendar.",
+  "Early is not a flex when you're the one who set the time.",
+  "{minutes} minutes early. Your word means as little going forwards as backwards.",
+  "Ah, the rare reverse no-show. Still a broken promise.",
+  "You've arrived {minutes} minutes before you said. Consistency was never the goal, huh.",
+  "Great, now we all have to be early too. Thanks for that.",
+  "Stating a time and then beating it by {minutes} minutes is just chaos with good PR.",
+  "Some people are late. You've invented a whole new way to be unreliable.",
+];
+
 // Picks a random line and fills in {minutes} if that line uses it.
 function pickRoastLine(minutes) {
   const line = ROAST_LINES[Math.floor(Math.random() * ROAST_LINES.length)];
   return line.replace(/\{minutes\}/g, String(minutes));
 }
 
-module.exports = { ROAST_LINES, pickRoastLine };
+// Same, for the absurdly-early pool. `minutes` here is how many minutes EARLY
+// they were, always a positive number - the caller takes care of the sign.
+function pickEarlyScoldLine(minutes) {
+  const line = EARLY_SCOLD_LINES[Math.floor(Math.random() * EARLY_SCOLD_LINES.length)];
+  return line.replace(/\{minutes\}/g, String(minutes));
+}
+
+module.exports = { ROAST_LINES, pickRoastLine, EARLY_SCOLD_LINES, pickEarlyScoldLine };

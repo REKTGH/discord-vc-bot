@@ -25,9 +25,10 @@ process.env.AWARDS_CHANNEL_PATH = testAwardsChannelPath;
 process.env.PLAN_EXPIRY_HOURS = '3';
 process.env.GRACE_PERIOD_MINUTES = '2';
 process.env.ROAST_THRESHOLD_MINUTES = '30';
+process.env.EARLY_SCOLD_THRESHOLD_MINUTES = '60';
 
-const { classify, isRoastWorthy, buildVerdictMessage } = require('../src/verdict');
-const { ROAST_LINES, pickRoastLine } = require('../src/roastLines');
+const { classify, isRoastWorthy, isEarlyScoldWorthy, isCalloutWorthy, buildVerdictMessage } = require('../src/verdict');
+const { ROAST_LINES, pickRoastLine, EARLY_SCOLD_LINES, pickEarlyScoldLine } = require('../src/roastLines');
 const { chooseVerdictRouting } = require('../src/voiceHandler');
 const planTracker = require('../src/planTracker');
 const { recordResult, getLeaderboard, getMonthlyAwards } = require('../src/db');
@@ -86,6 +87,41 @@ ok('late but under the threshold is not roast-worthy', () => assert.strictEqual(
 ok('early is never roast-worthy, no matter the magnitude', () => assert.strictEqual(isRoastWorthy(classify(-90 * 60 * 1000)), false));
 ok('on time is never roast-worthy', () => assert.strictEqual(isRoastWorthy(classify(0)), false));
 
+console.log('\n=== verdict.isEarlyScoldWorthy (v17) ===');
+ok('early verdict exposes earlyMinutes as a positive number', () => assert.strictEqual(classify(-75 * 60 * 1000).earlyMinutes, 75));
+ok('early at/above the threshold is scold-worthy', () => assert.strictEqual(isEarlyScoldWorthy(classify(-60 * 60 * 1000)), true));
+ok('early but under the threshold is not scold-worthy', () => assert.strictEqual(isEarlyScoldWorthy(classify(-59 * 60 * 1000)), false));
+ok('late is never early-scold-worthy, no matter the magnitude', () => assert.strictEqual(isEarlyScoldWorthy(classify(120 * 60 * 1000)), false));
+ok('on time is never early-scold-worthy', () => assert.strictEqual(isEarlyScoldWorthy(classify(0)), false));
+ok('isCalloutWorthy covers both directions but nothing in between', () => {
+  assert.strictEqual(isCalloutWorthy(classify(47 * 60 * 1000)), true, 'very late should be a callout');
+  assert.strictEqual(isCalloutWorthy(classify(-90 * 60 * 1000)), true, 'very early should be a callout');
+  assert.strictEqual(isCalloutWorthy(classify(10 * 60 * 1000)), false, 'mildly late should not');
+  assert.strictEqual(isCalloutWorthy(classify(-10 * 60 * 1000)), false, 'mildly early should not');
+  assert.strictEqual(isCalloutWorthy(classify(0)), false, 'on time should not');
+});
+
+console.log('\n=== EARLY_SCOLD_LINES (v17) ===');
+ok('EARLY_SCOLD_LINES has real variety', () => assert.ok(EARLY_SCOLD_LINES.length >= 10, `only ${EARLY_SCOLD_LINES.length} lines`));
+ok('pickEarlyScoldLine always resolves {minutes} and matches a known line', () => {
+  const expanded = new Set(EARLY_SCOLD_LINES.map((line) => line.replace(/\{minutes\}/g, '75')));
+  for (let i = 0; i < 200; i++) {
+    const result = pickEarlyScoldLine(75);
+    assert.ok(!result.includes('{minutes}'), `left a literal placeholder in: ${result}`);
+    assert.ok(expanded.has(result), `unexpected line: ${result}`);
+  }
+});
+// Guards against a line being copy-pasted over from ROAST_LINES: {minutes} is
+// substituted with how many minutes EARLY someone was, so a line phrasing that
+// number as lateness would print a flat contradiction. Says nothing about the
+// word "late" elsewhere in a line - "early is just being late to a plan you
+// made up privately" is the joke working as intended.
+ok('no early-scold line phrases the {minutes} count as lateness', () => {
+  for (const line of EARLY_SCOLD_LINES) {
+    assert.ok(!/\{minutes\}\s*(?:minutes?|mins?)?\s*late\b/i.test(line), `early line calls {minutes} lateness: ${line}`);
+  }
+});
+
 console.log('\n=== verdict.buildVerdictMessage ===');
 ok('below the roast threshold: plain factual message, mention included', () => {
   const verdict = classify(10 * 60 * 1000); // 10 min late, threshold is 30
@@ -120,6 +156,24 @@ ok('one under the threshold does not', () => {
   const msg = buildVerdictMessage(verdict, { mention: '<@u1>', targetTime: new Date(), actualTime: new Date() });
   assert.ok(msg.includes('joined voice —'), 'expected 29-min-late to stay the plain message');
 });
+ok('absurdly early: a scold line leads, factual info still present', () => {
+  const verdict = classify(-75 * 60 * 1000); // 75 min early, threshold is 60
+  const msg = buildVerdictMessage(verdict, {
+    mention: '<@u1>',
+    targetTime: new Date('2026-08-17T21:00:00Z'),
+    actualTime: new Date('2026-08-17T19:45:00Z'),
+  });
+  assert.ok(msg.includes('<@u1>'), 'missing mention');
+  assert.ok(!msg.includes('joined voice —'), 'expected the plain phrasing to be replaced by a scold');
+  assert.ok(!msg.includes('{minutes}'), 'left a literal placeholder unresolved');
+  assert.ok(msg.includes('early by 75 min'), 'expected the label to still be present in parentheses');
+});
+ok('mildly early stays the plain message - only absurdly early gets scolded', () => {
+  const verdict = classify(-20 * 60 * 1000); // 20 min early, threshold is 60
+  const msg = buildVerdictMessage(verdict, { mention: '<@u1>', targetTime: new Date(), actualTime: new Date() });
+  assert.ok(msg.includes('joined voice —'), 'expected 20-min-early to stay the plain message');
+  assert.ok(msg.includes('early by 20 min'), 'expected the plain early label');
+});
 
 console.log('\n=== voiceHandler.chooseVerdictRouting ===');
 ok('no /log-here configured: always the announce channel, ping never suppressed, roast or not', () => {
@@ -141,6 +195,14 @@ ok('/log-here configured but roast-worthy (30+ min late): stays in the announce 
 ok('/log-here configured, exactly at the roast threshold: still counts as roast-worthy for routing too', () => {
   const routing = chooseVerdictRouting(classify(30 * 60 * 1000), { logChannelId: 'log', announceChannelId: 'announce' });
   assert.deepStrictEqual(routing, { channelId: 'announce', suppressPing: false });
+});
+ok('/log-here configured but absurdly early: also stays in the announce channel and pings (v17)', () => {
+  const routing = chooseVerdictRouting(classify(-90 * 60 * 1000), { logChannelId: 'log', announceChannelId: 'announce' });
+  assert.deepStrictEqual(routing, { channelId: 'announce', suppressPing: false });
+});
+ok('/log-here configured, mildly early: still redirected silently, unchanged from before v17', () => {
+  const routing = chooseVerdictRouting(classify(-20 * 60 * 1000), { logChannelId: 'log', announceChannelId: 'announce' });
+  assert.deepStrictEqual(routing, { channelId: 'log', suppressPing: true });
 });
 
 console.log('\n=== planTracker ===');
