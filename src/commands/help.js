@@ -16,17 +16,26 @@ async function execute(interaction) {
         '• "omw, joining in 10 min"\n' +
         '• "be there at 9"\n' +
         '• "hopping on at 9:30pm"\n' +
-        '• "vc in 5"\n' +
+        '• "vc in 5", "getting on in 10", "game at 9", "on in 5"\n' +
+        '• just a time, like "10:30" or "9pm"\n' +
         '• just a bare number, like "30" (means "in 30 minutes")\n\n' +
         "If I understood you, I'll react with ⏰ on your message. When you actually join a voice channel, " +
         "I'll reply here with whether you were early, on time, or late — show up late enough and don't be " +
-        "surprised if that reply gets a little passive-aggressive.\n\n" +
+        "surprised if that reply gets a little passive-aggressive. Turn up more than " +
+        `${config.earlyScoldThresholdMinutes} minutes EARLY and you'll hear about that too — you still didn't ` +
+        'keep to the time you gave.\n\n' +
+        '**Joining someone else\'s plan:** tap the ⏰ on anyone\'s tracked message and you\'ll be held to that ' +
+        'same time, with your own verdict. Tap it again to drop out — that costs you nothing.\n\n' +
+        '**If a bare number is ambiguous** (does "10" mean 10 minutes or 10 o\'clock?) I\'ll put ⏳ and 🕐 on ' +
+        "your message instead of guessing. Tap whichever you meant — nothing is tracked until you do.\n\n" +
         `On time = within ${config.gracePeriodMinutes} minutes of what you said. ` +
         `Plans expire after ${config.planExpiryHours} hours if you never join.\n\n` +
-        'Changed your mind, or did I get it wrong? Say "nevermind"/"nvm", or run `/cancel` — either erases your pending plan and skips the no-show note. Only "nevermind"/"nvm" counts as a cancellation on `/leaderboard`, though - `/cancel` is for fixing my mistakes, so it doesn\'t count against you.\n\n' +
-        '`/leaderboard` — punctuality ranking for this server, latest to least late.\n' +
-        '`/leaderboard-here` — turn this channel into a live, self-updating leaderboard (needs Manage Server permission).\n' +
+        'Changed your mind, or did I get it wrong? Say "nevermind"/"nvm", or run `/cancel` — either erases your pending plan and skips the no-show note. Only "nevermind"/"nvm" counts as a cancellation on `/leaderboard`, though - `/cancel` is for fixing my mistakes, so it doesn\'t count against you. Said "nvm" to a friend and I took it personally? `/uncancel` puts it right back.\n\n' +
+        '`/leaderboard` — punctuality ranking for this month, latest to least late. Add `scope: All time` for the full history.\n' +
+        '`/leaderboard-here` — turn this channel into a live, self-updating leaderboard (needs Manage Server permission). It starts a fresh one each month and leaves the old one in place.\n' +
+        '`/track` — announce a plan on purpose, and let others tap ⏰ to be tracked with you.\n' +
         '`/cancel` — erase your own pending plan if I tracked something wrong.\n' +
+        '`/uncancel` — undo an accidental "nvm" and put your plan back.\n' +
         '`/log-here` — send voice-join messages to this channel instead, without pinging anyone (needs Manage Server permission).\n' +
         '`/awards` — show punctuality awards (most late, most time late, most cancels) for the most recently completed month, right now.\n' +
         '`/awards-here` — post those same awards automatically in this channel at the start of each month (needs Manage Server permission).'

@@ -5,7 +5,8 @@ A Discord bot for your server that:
 1. Reads normal chat messages and notices when someone says they're about to join voice chat — "omw, joining in 10 min", "be there at 9", "hopping on at 9:30pm", "be on in 10".
 2. Watches for that person actually joining a voice channel.
 3. Replies in the channel saying whether they were early, on time, or late — or, if they never show up at all, notes that they no-showed.
-4. Keeps score, so `/leaderboard` shows everyone ranked from latest to least late (and who ghosts) in the server over time — or set up `/leaderboard-here` for a live scoreboard message that updates itself in a channel of your choice.
+4. Keeps score, so `/leaderboard` shows everyone ranked from latest to least late (and who ghosts) — standings reset each calendar month, with all-time still one option away. Set up `/leaderboard-here` for a live scoreboard message that updates itself in a channel of your choice.
+5. Lets other people opt into someone else’s stated plan just by tapping the ⏰ reaction on it, so a whole group can be held to one stated time.
 
 No slash command is needed to make a plan — you just talk normally and the bot listens for it. This guide assumes you've never coded before and walks through every step. It'll take roughly 30–45 minutes the first time.
 
@@ -16,7 +17,7 @@ No slash command is needed to make a plan — you just talk normally and the bot
 - [Part 1 — Create the bot on Discord](#part-1--create-the-bot-on-discord)
 - [Part 2 — Invite the bot to your server](#part-2--invite-the-bot-to-your-server)
 - [Part 3 — Run it on your own computer](#part-3--run-it-on-your-own-computer)
-- [Part 4 — Keep it running 24/7 for free](#part-4--keep-it-running-247-for-free)
+- [Part 4 — Keep it running 24/7](#part-4--keep-it-running-247)
 - [How to talk to the bot](#how-to-talk-to-the-bot)
 - [Reading the leaderboard](#reading-the-leaderboard)
 - [Live leaderboard channel](#live-leaderboard-channel)
@@ -104,7 +105,7 @@ In Discord, the bot should now show as online. Try it:
 - Type `omw, joining in 2 min` in a text channel the bot can see. It should react with a ⏰.
 - Join any voice channel within those 2 minutes. The bot should post a message saying whether you were early, on time, or late.
 - Type another plan, then reply `nvm` before joining. It should react with 🚫 instead, and stay quiet after.
-- Run `/leaderboard`, `/leaderboard-here`, `/cancel`, `/log-here`, `/awards`, `/awards-here`, and `/help` to see the slash commands.
+- Run `/leaderboard`, `/leaderboard-here`, `/track`, `/cancel`, `/uncancel`, `/log-here`, `/awards`, `/awards-here`, and `/help` to see the slash commands.
 
 (No-shows take up to `PLAN_EXPIRY_HOURS` — 12 hours by default — to trigger, so you won't see one during a quick local test unless you leave the bot running that long. That's expected; see [Customizing](#customizing) if you'd rather use a shorter window.)
 
@@ -112,64 +113,83 @@ To stop the bot, go back to the terminal and press `Ctrl+C`.
 
 ---
 
-## Part 4 — Keep it running 24/7 for free
+## Part 4 — Keep it running 24/7
 
 Running it on your own computer only works while that computer is on and the terminal window is open. To have it running all the time, you need to put it on a server somewhere else — "hosting."
 
-Truly free, always-on hosting is harder to find than it used to be — most hosting platforms have moved to free trial credits rather than a permanent free tier. Here's the most reliable $0 path I found, plus a low-cost alternative if you'd rather avoid its one quirk.
+**This bot is hosted on an Oracle Cloud "Always Free" compute instance.** That tier is genuinely free with no time limit, gives you a real Linux machine with a real disk, and — unlike the free tiers of most app hosts — never sleeps and never wipes your data on redeploy. The trade-off is that you set it up once as an actual server rather than clicking through a dashboard.
 
-### Option A: Render (free, no credit card, one quirk)
+### First-time setup (already done — here for reference)
 
-Render's free tier doesn't cost anything and doesn't ask for a card, but it puts a web service to sleep after 15 minutes without an incoming web request. This bot includes a tiny built-in web server just for this purpose — you pair it with a free "uptime" service that pings it every few minutes so it never falls asleep.
+1. **Create the instance:** at [cloud.oracle.com](https://cloud.oracle.com), create a free-tier **Compute instance** running **Ubuntu**. When it offers you an SSH key, download it and keep it safe — it's the only way in. Note the instance's **public IP address**.
+2. **Connect to it** from PowerShell or Terminal:
+   ```
+   ssh -i ~/.ssh/your-key-file.key ubuntu@YOUR-SERVER-IP
+   ```
+3. **Install Node.js and git** on the server:
+   ```
+   sudo apt update && sudo apt install -y nodejs npm git
+   ```
+4. **Clone the code and install dependencies:**
+   ```
+   git clone https://github.com/YOUR-USERNAME/discord-vc-bot.git
+   cd discord-vc-bot
+   npm install
+   ```
+5. **Create the `.env` file** on the server with your token (`nano .env`, paste, then `Ctrl+O`, `Enter`, `Ctrl+X`). This file lives only on the server and is never committed — see [Customizing](#customizing) for what can go in it.
+6. **Run it as a service** so it starts on boot and restarts if it crashes. Create `/etc/systemd/system/bot.service` with `sudo nano /etc/systemd/system/bot.service`, then enable it:
+   ```
+   sudo systemctl enable bot
+   sudo systemctl start bot
+   ```
 
-**Trade-off to know upfront:** Render's free tier doesn't include persistent storage, so the leaderboard's data file resets whenever the service restarts or you redeploy. Fine for a fun, casual leaderboard among friends; not fine if you want permanent history — see Option B for that.
+### Everyday use
 
-1. **Put the code on GitHub** (Render deploys from a GitHub repository):
-   - Create a free account at [github.com](https://github.com) if you don't have one.
-   - Click **New repository**, name it (e.g. `discord-vc-bot`), keep it **Private**, and create it.
-   - On the repo page, use **uploading an existing file**. Open your local `discord-vc-bot` folder in a second File Explorer/Finder window, select everything *inside* it (`src`, `test`, `README.md`, `package.json`, etc. — but not the `node_modules` folder or your `.env` file), and drag those selected items into the GitHub page.
-     - **Important:** drag the files and folders that are *inside* `discord-vc-bot`, not the `discord-vc-bot` folder itself. If you drag the folder itself, GitHub nests everything one level too deep and Render won't find `package.json` — if that happens, see the Troubleshooting entry below for the one-setting fix.
-   - Commit the upload.
-2. **Create the Render service:**
-   - Sign up at [render.com](https://render.com) (using "Sign up with GitHub" is easiest — it connects the two automatically).
-   - Click **New** → **Web Service**, and pick the repository you just created.
-   - Runtime: **Node**. Build command: `npm install`. Start command: `npm start`.
-   - Instance type: **Free**.
-   - Under **Environment Variables**, add `DISCORD_TOKEN` with your token as the value (and any others from `.env` you want to change — see [Customizing](#customizing)).
-   - Click **Create Web Service**. After a minute or two, the logs should show "Logged in as..." — your bot is now live.
-3. **Stop it from sleeping:**
-   - Copy the `.onrender.com` URL Render gives your service.
-   - Sign up free at [UptimeRobot](https://uptimerobot.com) (or a similar free uptime checker like cron-job.org).
-   - Add a new monitor that pings your Render URL every 5 minutes.
-   - That's it — as long as UptimeRobot is pinging it, Render won't put it to sleep.
+**To update the bot after changing the code:**
 
-### Option B: Railway (a little easier, small cost after the free trial)
+```
+ssh -i ~/.ssh/your-key-file.key ubuntu@YOUR-SERVER-IP
+cd discord-vc-bot
+git pull origin main
+sudo systemctl restart bot
+```
 
-Railway gives $5 of free usage with no credit card required, deploys straight from GitHub the same way as Render, doesn't need the sleep/ping workaround, and supports persistent storage so your leaderboard survives restarts. The trade-off is that $5 of usage doesn't last forever for an always-on bot — once it runs out, keeping the bot online costs a small amount (typically a few dollars a month for a lightweight bot like this one).
+**To check it's running / see errors:**
 
-If you'd rather not deal with the UptimeRobot step and don't mind a small future cost, this is the smoother option:
-1. Push the code to GitHub the same way as Option A, step 1.
-2. Sign up at [railway.app](https://railway.com), **New Project** → **Deploy from GitHub repo**.
-3. Add a **Volume** (for persistent storage) mounted at `/app/data`, and set the `DB_PATH` environment variable to `/app/data/results.json` so the leaderboard survives restarts.
-4. Add your `DISCORD_TOKEN` and other environment variables under the service's **Variables** tab.
-5. Railway deploys automatically — check the **Deployments** logs for "Logged in as...".
+```
+sudo journalctl -f -u bot
+```
 
-Either way, once it's deployed, invite flow and everyday usage (Parts 1–2 and the section below) stay exactly the same.
+Press `Ctrl+C` to stop watching the log. A healthy start looks like `Logged in as...` followed by `Slash commands registered in N server(s).`
+
+**Because the server has a real disk, your data persists.** `results.json` and the channel settings for `/leaderboard-here`, `/log-here` and `/awards-here` all survive restarts and redeploys — you set those up once and they stay set.
+
+> **Note on the built-in web server:** `src/index.js` starts a tiny HTTP server, but only if a `PORT` environment variable is set. That exists for app hosts whose free tiers sleep without web traffic. On this setup nothing sets `PORT`, so it never starts — you don't need an uptime pinger.
 
 ---
 
 ## How to talk to the bot
 
-No command needed — just chat naturally. The bot looks for a "join intent" phrase (like "omw", "joining", "hopping on", "be there", "be on", or mentioning "vc") combined with a time:
+No command needed — just chat naturally. The bot looks for a "join intent" phrase (like "omw", "joining", "hopping on", "be there", "be on", "getting on", "game in/at", "on in/at", or mentioning "vc") combined with a time:
 
 - "omw, joining in 10 min"
 - "be there at 9"
 - "hopping on at 9:30pm"
 - "vc in 5"
+- "getting on in 10"
+- "game at 9"
+- "on in 5"
 - "on my way, 15 minutes"
 - "be on in 10" (bare numbers after "in" are assumed to mean minutes)
 
-One exception to the "needs a join-intent phrase" rule: a message that's **just a number and nothing else**, like "30", is understood as "be on in 30 minutes" — a common shorthand reply when someone's already asked "when?". It only kicks in when the whole message is the number (optionally with trailing punctuation like "30?" or "30."); a number inside a longer, unrelated sentence still needs a real intent phrase like the examples above. Numbers below 1 or above 180 are ignored as implausible.
+There are two exceptions to the "needs a join-intent phrase" rule, both for messages that are *nothing but* a time:
+
+- **Just a clock time** — "10:30", "9pm", "7:15 am" — is tracked as that time. A colon or an am/pm can only mean a clock time, so there's nothing to be unsure about.
+- **Just a number** — "30" — means "in 30 minutes", the common shorthand when someone's already asked "when?". It only kicks in when the whole message is the number (trailing punctuation like "30?" is fine); a number inside a longer sentence still needs a real intent phrase. Numbers below 1 or above 180 are ignored as implausible.
+
+**If a bare number is genuinely ambiguous, the bot asks instead of guessing.** "10" could mean "in 10 minutes" or "at 10 o'clock", and there's no way to tell from the message. So for any bare number that's also a valid clock hour (1–12), the bot reacts with **⏳** (minutes) and **🕐** (o'clock) and tracks nothing until you tap one. Numbers above 12 aren't ambiguous — nobody means "at 45 o'clock" — so those are still read straight as minutes with no prompt.
+
+**Anyone can join someone else's plan.** Every tracked plan gets a ⏰ from the bot; tapping that same ⏰ signs you up for the same stated time, with your own verdict and your own no-show note. Tap it again to drop out — backing out of someone else's plan isn't flaking on your own, so it costs you nothing on the leaderboard. Use **`/track`** to start a plan for this on purpose (e.g. `/track when: 9pm`), which posts a public message for people to react to.
 
 If it understood you, it reacts with ⏰ on your message. When you join a voice channel afterward, it replies in that same text channel with the verdict. Run `/help` any time for a quick in-Discord reminder, and `/leaderboard` to see the server rankings.
 
@@ -178,6 +198,10 @@ If it understood you, it reacts with ⏰ on your message. When you join a voice 
 **Changed your mind, or did the bot get it wrong?** Reply with "nevermind" or "nvm" and the bot cancels your plan quietly (reacting with 🚫) — it won't post a no-show note for it later. This is also logged and shows up in the **Cancels** column on `/leaderboard`, since actually backing out of a stated plan is its own kind of punctuality stat. If you instead send a new time ("nvm, joining at 10 instead"), that's treated as an update, not a cancellation — the new time replaces the old one automatically and nothing gets logged.
 
 You can also run **`/cancel`** to erase a pending plan — same immediate effect (no no-show note later), but it deliberately does **not** add to the Cancels column. It's meant for correcting a bot mistake (for example, a bare number typed for an unrelated reason got misread as a join plan - see the bare-number shorthand above), not for tallying real flaking, so fixing an error this way doesn't count against you the way an actual "nevermind" does.
+
+**Said "nvm" to a friend and the bot took it personally?** Run **`/uncancel`**. The bot can't tell "nvm, not joining after all" from "nvm, found it" — both are just the word "nvm" typed while you happen to have a plan pending — so it will sometimes cancel a plan you never meant to call off. `/uncancel` puts the plan back *and* removes the cancellation from the leaderboard, leaving things exactly as they were. It only works on your most recent cancellation, and only while that plan would still be live.
+
+**Turning up absurdly early gets called out too.** Arrive `EARLY_SCOLD_THRESHOLD_MINUTES` (default 60) or more before the time you gave, and instead of a plain "early by N min" you'll get a line from a separate pool about not keeping to your own stated time — because everyone else worked off a time that turned out to be fiction. Mildly early is still just fine and reported plainly. Like a roast, an early scold always posts in the original channel even when `/log-here` is set.
 
 **No-shows.** If you say you're joining but never actually do, the bot waits `PLAN_EXPIRY_HOURS` (default 12) hours past your stated time, then posts a note that you no-showed and stops tracking that plan. Cancel with "nevermind"/"nvm" or `/cancel` beforehand to avoid that note entirely. No-shows are also logged and shown in the **No Show** column on `/leaderboard`, but don't affect where you're ranked.
 
@@ -197,6 +221,8 @@ You can also run **`/cancel`** to erase a pending plan — same immediate effect
 - **Cancels** — times they said "nevermind"/"nvm" on a plan they'd already stated. (`/cancel` doesn't add here — see above.)
 - **No Show** — times they said they'd join and then never did.
 
+**The standings cover the current calendar month.** Every 1st, the table starts fresh, so one bad week doesn't follow someone around all year. Nothing is deleted — run `/leaderboard scope: All time` for the full history, and see [Live leaderboard channel](#live-leaderboard-channel) for how the self-updating message keeps each finished month as its own post.
+
 This table image is drawn for Discord's **dark theme** — see [Known limitations](#known-limitations) if you or your server uses light mode.
 
 ## Live leaderboard channel
@@ -208,6 +234,7 @@ A few things worth knowing:
 - Running `/leaderboard-here` again in a *different* channel moves it there — the old post stops updating (it's left behind as a stale snapshot; delete it manually if you don't want it hanging around).
 - Running it again in the *same* channel just refreshes it immediately, no duplicate message.
 - If someone deletes the live message by hand, the bot notices next time it needs to update and posts a fresh one automatically.
+- **It starts a new message each month.** When the calendar month turns over, the bot edits the current message one last time so it shows that month’s final standings (dropping the "Live" footer), leaves it in the channel as a permanent record, and posts a fresh live message below it for the new month. Nothing is deleted — not the old message, and not the underlying history.
 
 ## Voice-join log channel
 
@@ -222,7 +249,7 @@ A few things worth knowing:
 
 ## Monthly awards
 
-Separate from `/leaderboard`'s all-time ranking, the bot can also post a "hall of fame" (or shame) for whichever month just ended — three awards, each its own winner:
+Alongside the leaderboard, the bot can also post a "hall of fame" (or shame) for whichever month just ended — three awards, each its own winner:
 
 - ⏰ **Most Late** — whoever was late the most *times* that month.
 - ⏱️ **Most Time Late** — whoever racked up the most total minutes late that month, added up across every late join. This can crown someone different from "Most Late" — one very late join can outweigh several slightly-late ones.
@@ -250,8 +277,10 @@ All settings live in your `.env` file:
 | `GRACE_PERIOD_MINUTES` | `2` | +/- this many minutes still counts as "on time". |
 | `PLAN_EXPIRY_HOURS` | `12` | Hours after the *stated* join time before a never-followed-through-on plan is marked a no-show. |
 | `ROAST_THRESHOLD_MINUTES` | `30` | Minutes late (or more) before the join reply swaps in a random passive-aggressive line (`src/roastLines.js`) instead of the plain "late by N min" text. |
+| `EARLY_SCOLD_THRESHOLD_MINUTES` | `60` | The mirror image: minutes EARLY (or more) before the reply calls you out for not keeping to the time you gave. Uses a separate line pool in `src/roastLines.js`. |
+| `MAX_FUTURE_HOURS` | `12` | How far ahead a stated time can be before the bot decides it is not a "joining soon" plan and ignores it. Raise this if your group announces plans further out. |
 | `ALLOWED_CHANNEL_IDS` | *(blank = all channels)* | Comma-separated channel IDs to restrict message-scanning to specific channels. |
-| `DB_PATH` | `data/results.json` | Where leaderboard history is stored. Only worth changing to point at a persistent volume — see Part 4, Option B. |
+| `DB_PATH` | `data/results.json` | Where leaderboard history is stored. Nothing is ever deleted here, including at a monthly reset. |
 | `LIVE_LEADERBOARD_PATH` | `data/live-leaderboard.json` | Where the bot remembers the `/leaderboard-here` channel+message. Same deal as `DB_PATH`. |
 | `LOG_CHANNEL_PATH` | `data/log-channel.json` | Where the bot remembers the `/log-here` channel. Same deal as `DB_PATH`. |
 | `AWARDS_CHANNEL_PATH` | `data/awards-channel.json` | Where the bot remembers the `/awards-here` channel and which month it last posted. Same deal as `DB_PATH`. |
@@ -268,9 +297,12 @@ Worth knowing about, in case behavior ever looks surprising:
 - **Natural language parsing isn't perfect.** It's tuned to avoid false positives (it won't fire on a random message that happens to contain a number), which means occasionally it'll miss an unusually-phrased plan. If you notice a common phrase it's not catching, that's an easy tweak to `src/timeParser.js`.
 - **Explicit weekday mentions are ignored on purpose** ("next Friday at 9pm") — this bot is meant for "joining very soon," not scheduling ahead.
 - **No-show checks happen every 5 minutes**, not the instant the window elapses — so a no-show note can land up to ~5 minutes after the `PLAN_EXPIRY_HOURS` cutoff.
-- **The `/leaderboard-here`, `/log-here`, and `/awards-here` channels reset the same way the leaderboard data does.** On a host without persistent storage (Render's free tier), a redeploy wipes which channel was set for each, same as it wipes the results themselves — you'll need to re-run whichever ones you use after a redeploy. For `/awards-here` specifically, this also means the automatic monthly post can only fire if the bot happens to stay running continuously across an actual month boundary — if you're redeploying often while making changes, it may not get the chance to post until things settle down and it's just left running.
+- **The automatic monthly posts need the bot to be running when the month turns over.** Both the `/awards-here` post and the new monthly leaderboard fire from a check that runs once an hour while the bot is up. If the bot happens to be stopped across the entire month boundary, that month's automatic post is skipped — `/awards` still shows it on demand, and the leaderboard rolls over on the next restart.
+- **Un-reacting to a shared plan only works while the bot has been running since the plan was posted.** Who joined which plan is kept in memory, like the plans themselves. After a restart, tapping ⏰ on an older message won't do anything, because the bot no longer remembers that message was a plan.
 - **The leaderboard table image is drawn for dark mode.** It's a picture, not text, so it always looks pixel-identical everywhere (which is the whole reason it's an image) — but there's no way for the bot to know whether a given person is using Discord's light or dark theme, and it was designed to match dark mode. A light-theme viewer will see the table's light-colored text sitting on their light background, which reads worse than it does in dark mode.
-- **Roast lines are one-size-fits-all.** Everyone who's late past `ROAST_THRESHOLD_MINUTES` gets a random line from the same shared list in `src/roastLines.js` — there's no per-person opt-out short of raising that threshold sky-high, and the tone (dry/sarcastic) isn't configurable beyond editing the lines yourself. Make sure your server's actually up for the ribbing before turning the threshold down.
+- **Roast lines are one-size-fits-all.** Everyone who's late past `ROAST_THRESHOLD_MINUTES` gets a random line from the same shared list in `src/roastLines.js` — there's no per-person opt-out short of raising that threshold sky-high, and the tone (dry/sarcastic) isn't configurable beyond editing the lines yourself. The same goes for the early-arrival lines and `EARLY_SCOLD_THRESHOLD_MINUTES`. Make sure your server's actually up for the ribbing before turning either threshold down.
+- **"on in"/"on at" is a deliberately loose trigger.** Adding it means "on in 10" and "on at 9" get tracked, which is how people here actually talk — but it also means an unrelated sentence like "the movie was on at 10" will start a plan. That was a conscious trade-off in favour of catching real plans; `/cancel` clears any false positive, and it won't count against you.
+- **There's still no command to turn `/log-here` back off** once a server has set it — only to move it to a different channel.
 
 ## Troubleshooting
 
@@ -292,11 +324,20 @@ All three are restricted to members with the **Manage Server** permission by des
 **`npm install` fails.**
 Usually a Node.js version issue — confirm `node -v` shows v18 or higher. If you see a permissions error on macOS/Linux, avoid using `sudo`; instead search "fix npm permissions" for your OS, or reinstall Node.js via [nvm](https://github.com/nvm-sh/nvm).
 
-**Leaderboard data disappeared after a redeploy.**
-Expected on Render's free tier, which doesn't persist disk storage — see Part 4, Option A's trade-off note, or switch to Option B (Railway with a volume) if history matters to you.
+**The leaderboard looks empty at the start of a month.**
+That is the monthly reset working as intended — standings now cover the current calendar month. Nothing was deleted: run `/leaderboard scope: All time` to see the full history, and last month’s final table is still sitting in the channel as its own message.
+
+**Leaderboard data actually disappeared.**
+On the Oracle server the data file lives on a real disk and survives restarts and `git pull`, so this should not happen. Check that you are looking at the right scope (see above) first. If the data is genuinely gone, check `ls -la ~/discord-vc-bot/data/` on the server and `sudo journalctl -u bot | grep -i "could not read"` for a corrupted-file warning.
 
 **`/leaderboard` or `/leaderboard-here` reply with an error, or the message shows up with a broken-image icon where the table should be.**
 The bot is very likely missing the **Attach Files** permission — the leaderboard table is posted as an image, which needs that permission separately from Embed Links (a bot invited before this feature was added won't have it yet). Fix: **Server Settings → Roles →** find the bot's role → turn on **Attach Files** → **Save Changes**. No need to re-invite the bot or touch code.
 
-**Render build fails with `npm error code ENOENT ... Could not read package.json`.**
-The build log usually also shows something like `Using Node.js version ... via discord-vc-bot/package.json` just above the error — that `discord-vc-bot/` prefix is the giveaway. It means the GitHub upload nested everything one folder too deep (the `discord-vc-bot` folder itself got uploaded, instead of just its contents), so Render is looking for `package.json` in the repo's top level and only finding it one level down. Fastest fix, no re-upload needed: in the Render dashboard, open your service → **Settings** → scroll to **Build & Deploy** → **Root Directory** → **Edit** → type `discord-vc-bot` → **Save Changes**. Render will redeploy automatically; the build should succeed this time.
+**The bot won’t start after an update on the server.**
+Watch the log while it tries: `sudo journalctl -f -u bot`. The usual causes, in order of likelihood:
+- **A new dependency was added.** Run `npm install` again after `git pull` — a restart alone won’t fetch it.
+- **`Cannot find module`.** Confirm you are in the right folder and that `ls` shows `src/`, `package.json` and `node_modules/` side by side.
+- **`Failed to log in to Discord`.** The `.env` file on the server is missing or has a stale token. It is deliberately not in git, so it never arrives via `git pull` — check it with `cat .env` on the server.
+
+**Tapping ⏰ on a plan does nothing.**
+Either the plan was posted before the bot last restarted (it only remembers plans in memory, so a restart forgets which messages were plans), or the bot is missing the **Add Reactions** / **Read Message History** permission in that channel.
