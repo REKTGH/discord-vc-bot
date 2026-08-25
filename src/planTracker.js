@@ -19,6 +19,14 @@ function hasPlan(guildId, userId) {
   return pending.has(key(guildId, userId));
 }
 
+// Reads the pending plan without removing it, unlike consumePlan. Used when
+// something needs to inspect a plan and leave it in place - e.g. working out
+// whether someone's current plan came from the shared-plan reaction they just
+// took back (see reactionHandler.js).
+function peekPlan(guildId, userId) {
+  return pending.get(key(guildId, userId)) ?? null;
+}
+
 // The most recent cancellation per user, kept only so an accidental one can be
 // taken back (see restoreLastCancelled and /uncancel). "nvm" gets typed at a
 // friend mid-conversation far more often than it gets typed at the bot, and
@@ -94,6 +102,7 @@ function takeExpired() {
       pending.delete(k);
     }
   }
+  forgetStalePlanMessages(now);
   return expired;
 }
 
@@ -101,13 +110,75 @@ function pendingCount() {
   return pending.size;
 }
 
+// --- shared plans: one stated time, several people tracked against it ---
+//
+// When someone announces a plan (or runs /track), the bot marks that message
+// with a clock reaction. Anyone else who adds the same reaction is opting in
+// to be held to the same time. That means remembering which chat message
+// announced which plan, so a reaction arriving later can be traced back to a
+// target time. Same in-memory, short-lived reasoning as `pending` above.
+//
+// key: messageId -> { guildId, textChannelId, targetTime, ownerId, rawText, createdAt }
+const planMessages = new Map();
+
+function rememberPlanMessage(messageId, info) {
+  planMessages.set(messageId, { ...info, createdAt: Date.now() });
+}
+
+function getPlanMessage(messageId) {
+  return planMessages.get(messageId) ?? null;
+}
+
+// Drops plan messages whose time is far enough past that nobody could still
+// meaningfully opt in. Called from takeExpired so the two age out together
+// and this map can't grow without bound on a busy server.
+function forgetStalePlanMessages(now = Date.now()) {
+  const windowMs = config.planExpiryHours * 60 * 60 * 1000;
+  for (const [messageId, info] of planMessages) {
+    if (now - info.targetTime.getTime() > windowMs) planMessages.delete(messageId);
+  }
+  for (const [messageId, q] of ambiguityQuestions) {
+    // Both readings are gone by the time the later of the two has aged out.
+    const latest = Math.max(q.minutesTarget.getTime(), q.clockTarget.getTime());
+    if (now - latest > windowMs) ambiguityQuestions.delete(messageId);
+  }
+}
+
+// --- unanswered "did you mean minutes or o'clock?" prompts ---
+//
+// A bare "10" could mean either, so instead of guessing the bot asks by
+// putting both options on the message as reactions. Until the author picks
+// one there is no plan yet - just this question, waiting.
+//
+// key: messageId -> { guildId, userId, textChannelId, minutesTarget, clockTarget, rawText }
+const ambiguityQuestions = new Map();
+
+function rememberAmbiguityQuestion(messageId, info) {
+  ambiguityQuestions.set(messageId, { ...info, askedAt: Date.now() });
+}
+
+function getAmbiguityQuestion(messageId) {
+  return ambiguityQuestions.get(messageId) ?? null;
+}
+
+function forgetAmbiguityQuestion(messageId) {
+  return ambiguityQuestions.delete(messageId);
+}
+
 module.exports = {
   setPlan,
   hasPlan,
+  peekPlan,
   cancelPlan,
   hasRestorableCancellation,
   restoreLastCancelled,
   consumePlan,
   takeExpired,
   pendingCount,
+  rememberPlanMessage,
+  getPlanMessage,
+  forgetStalePlanMessages,
+  rememberAmbiguityQuestion,
+  getAmbiguityQuestion,
+  forgetAmbiguityQuestion,
 };

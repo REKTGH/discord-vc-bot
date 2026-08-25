@@ -30,6 +30,7 @@ process.env.EARLY_SCOLD_THRESHOLD_MINUTES = '60';
 const { classify, isRoastWorthy, isEarlyScoldWorthy, isCalloutWorthy, buildVerdictMessage } = require('../src/verdict');
 const { ROAST_LINES, pickRoastLine, EARLY_SCOLD_LINES, pickEarlyScoldLine } = require('../src/roastLines');
 const { chooseVerdictRouting } = require('../src/voiceHandler');
+const { WATCH_EMOJI, MINUTES_EMOJI, CLOCK_EMOJI, decideReactionAction, decideAmbiguityAnswer } = require('../src/reactionHandler');
 const planTracker = require('../src/planTracker');
 const { recordResult, removeLastResult, getLeaderboard, getMonthlyAwards } = require('../src/db');
 const { buildLeaderboardPayload } = require('../src/leaderboardView');
@@ -322,6 +323,131 @@ ok('takeExpired removes and returns only plans past the no-show window', () => {
   assert.strictEqual(planTracker.hasPlan('g1', 'expired-user'), false);
   assert.strictEqual(planTracker.hasPlan('g1', 'fresh-user'), true);
   planTracker.cancelPlan('g1', 'fresh-user'); // tidy up for later tests
+});
+
+console.log('\n=== planTracker: remembering which message announced a plan (v17) ===');
+ok('a remembered plan message can be looked up by message id', () => {
+  const targetTime = new Date();
+  planTracker.rememberPlanMessage('msg1', { guildId: 'g1', textChannelId: 'c1', targetTime, ownerId: 'owner', rawText: 'vc in 10' });
+  const found = planTracker.getPlanMessage('msg1');
+  assert.ok(found);
+  assert.strictEqual(found.ownerId, 'owner');
+  assert.strictEqual(found.targetTime, targetTime);
+});
+ok('an unknown message id looks up as null, not undefined', () => {
+  assert.strictEqual(planTracker.getPlanMessage('never-posted'), null);
+});
+ok('plan messages older than the no-show window are forgotten (window=3h)', () => {
+  const fourHoursAgo = new Date(Date.now() - 4 * 60 * 60 * 1000);
+  planTracker.rememberPlanMessage('msgOld', { guildId: 'g1', textChannelId: 'c1', targetTime: fourHoursAgo, ownerId: 'o', rawText: 'x' });
+  planTracker.rememberPlanMessage('msgNew', { guildId: 'g1', textChannelId: 'c1', targetTime: new Date(), ownerId: 'o', rawText: 'x' });
+  planTracker.forgetStalePlanMessages();
+  assert.strictEqual(planTracker.getPlanMessage('msgOld'), null, 'stale message should be dropped');
+  assert.ok(planTracker.getPlanMessage('msgNew'), 'a current one should survive');
+});
+ok('peekPlan reads a pending plan without consuming it', () => {
+  planTracker.setPlan({ userId: 'peek1', username: 'Pat', guildId: 'g1', textChannelId: 'c1', targetTime: new Date(), announcedAt: new Date(), rawText: 'omw' });
+  assert.ok(planTracker.peekPlan('g1', 'peek1'));
+  assert.ok(planTracker.peekPlan('g1', 'peek1'), 'still there after peeking');
+  assert.ok(planTracker.consumePlan('g1', 'peek1'), 'and still consumable');
+  assert.strictEqual(planTracker.peekPlan('g1', 'peek1'), null);
+});
+
+console.log('\n=== reactionHandler.decideReactionAction (v17) ===');
+const aPlanMessage = { messageId: 'm1', guildId: 'g1', textChannelId: 'c1', targetTime: new Date('2026-08-17T21:00:00Z'), ownerId: 'owner', rawText: 'vc at 9' };
+ok('a person tapping the clock on a tracked plan enrolls at that same time', () => {
+  const d = decideReactionAction({ emojiName: WATCH_EMOJI, isBot: false, planMessage: aPlanMessage, existingPlan: null, userId: 'someone' });
+  assert.strictEqual(d.action, 'enroll');
+  assert.strictEqual(d.targetTime, aPlanMessage.targetTime, 'must inherit the stated time exactly');
+});
+ok("the bot's own seed reaction never enrolls it", () => {
+  const d = decideReactionAction({ emojiName: WATCH_EMOJI, isBot: true, planMessage: aPlanMessage, existingPlan: null, userId: 'bot' });
+  assert.strictEqual(d.action, 'ignore');
+});
+ok('a different emoji is ignored', () => {
+  const d = decideReactionAction({ emojiName: '🎉', isBot: false, planMessage: aPlanMessage, existingPlan: null, userId: 'someone' });
+  assert.strictEqual(d.action, 'ignore');
+});
+ok('the clock on an ordinary message (no tracked plan) is ignored', () => {
+  const d = decideReactionAction({ emojiName: WATCH_EMOJI, isBot: false, planMessage: null, existingPlan: null, userId: 'someone' });
+  assert.strictEqual(d.action, 'ignore');
+});
+ok('the plan author reacting to their own plan is left alone', () => {
+  const d = decideReactionAction({ emojiName: WATCH_EMOJI, isBot: false, planMessage: aPlanMessage, existingPlan: null, userId: 'owner' });
+  assert.strictEqual(d.action, 'ignore');
+});
+ok('removing the clock withdraws a plan that came from that message', () => {
+  const existingPlan = { sourceMessageId: 'm1' };
+  const d = decideReactionAction({ emojiName: WATCH_EMOJI, isBot: false, planMessage: aPlanMessage, existingPlan, userId: 'someone' }, { removing: true });
+  assert.strictEqual(d.action, 'withdraw');
+});
+ok('removing the clock does NOT touch a plan the person stated themselves', () => {
+  const existingPlan = { sourceMessageId: undefined }; // their own typed plan
+  const d = decideReactionAction({ emojiName: WATCH_EMOJI, isBot: false, planMessage: aPlanMessage, existingPlan, userId: 'someone' }, { removing: true });
+  assert.strictEqual(d.action, 'ignore');
+});
+ok('removing the clock does NOT touch a plan inherited from a different message', () => {
+  const existingPlan = { sourceMessageId: 'some-other-message' };
+  const d = decideReactionAction({ emojiName: WATCH_EMOJI, isBot: false, planMessage: aPlanMessage, existingPlan, userId: 'someone' }, { removing: true });
+  assert.strictEqual(d.action, 'ignore');
+});
+ok('removing when there is no plan at all is a no-op', () => {
+  const d = decideReactionAction({ emojiName: WATCH_EMOJI, isBot: false, planMessage: aPlanMessage, existingPlan: null, userId: 'someone' }, { removing: true });
+  assert.strictEqual(d.action, 'ignore');
+});
+ok('the author is left alone on removal too, not just on add', () => {
+  const d = decideReactionAction({ emojiName: WATCH_EMOJI, isBot: false, planMessage: aPlanMessage, existingPlan: { sourceMessageId: 'm1' }, userId: 'owner' }, { removing: true });
+  assert.strictEqual(d.action, 'ignore');
+});
+
+console.log('\n=== reactionHandler.decideAmbiguityAnswer (v17) ===');
+const aQuestion = {
+  guildId: 'g1',
+  userId: 'asker',
+  textChannelId: 'c1',
+  minutesTarget: new Date('2026-08-17T18:10:00Z'),
+  clockTarget: new Date('2026-08-18T05:00:00Z'),
+  rawText: '10',
+};
+ok('tapping the hourglass resolves to the minutes reading', () => {
+  const d = decideAmbiguityAnswer({ emojiName: MINUTES_EMOJI, isBot: false, question: aQuestion, userId: 'asker' });
+  assert.strictEqual(d.action, 'resolve');
+  assert.strictEqual(d.reading, 'minutes');
+  assert.strictEqual(d.targetTime, aQuestion.minutesTarget);
+});
+ok('tapping the clock face resolves to the o clock reading', () => {
+  const d = decideAmbiguityAnswer({ emojiName: CLOCK_EMOJI, isBot: false, question: aQuestion, userId: 'asker' });
+  assert.strictEqual(d.action, 'resolve');
+  assert.strictEqual(d.reading, 'clock');
+  assert.strictEqual(d.targetTime, aQuestion.clockTarget);
+});
+ok('only the person who typed the message can answer it', () => {
+  const d = decideAmbiguityAnswer({ emojiName: CLOCK_EMOJI, isBot: false, question: aQuestion, userId: 'a-bystander' });
+  assert.strictEqual(d.action, 'ignore', 'nobody else gets to decide what someone meant');
+});
+ok("the bot's own two offered options never answer the question themselves", () => {
+  const d = decideAmbiguityAnswer({ emojiName: MINUTES_EMOJI, isBot: true, question: aQuestion, userId: 'bot' });
+  assert.strictEqual(d.action, 'ignore');
+});
+ok('an unrelated emoji is not an answer', () => {
+  const d = decideAmbiguityAnswer({ emojiName: '👍', isBot: false, question: aQuestion, userId: 'asker' });
+  assert.strictEqual(d.action, 'ignore');
+});
+ok('the watch emoji is not an answer either - the two must not collide', () => {
+  assert.notStrictEqual(WATCH_EMOJI, MINUTES_EMOJI);
+  assert.notStrictEqual(WATCH_EMOJI, CLOCK_EMOJI);
+  const d = decideAmbiguityAnswer({ emojiName: WATCH_EMOJI, isBot: false, question: aQuestion, userId: 'asker' });
+  assert.strictEqual(d.action, 'ignore');
+});
+ok('a reaction on a message with no open question is ignored', () => {
+  const d = decideAmbiguityAnswer({ emojiName: MINUTES_EMOJI, isBot: false, question: null, userId: 'asker' });
+  assert.strictEqual(d.action, 'ignore');
+});
+ok('an answered question is forgotten and cannot be answered twice', () => {
+  planTracker.rememberAmbiguityQuestion('qmsg', aQuestion);
+  assert.ok(planTracker.getAmbiguityQuestion('qmsg'));
+  assert.strictEqual(planTracker.forgetAmbiguityQuestion('qmsg'), true);
+  assert.strictEqual(planTracker.getAmbiguityQuestion('qmsg'), null);
 });
 
 console.log('\n=== db (JSON file) leaderboard roundtrip ===');

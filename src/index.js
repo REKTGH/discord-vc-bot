@@ -1,10 +1,11 @@
 // index.js — entry point. Wires up the Discord client, registers slash
 // commands, and starts listening. Run with `node src/index.js` (or `npm start`).
 const http = require('http');
-const { Client, GatewayIntentBits, Events, Collection, MessageFlags } = require('discord.js');
+const { Client, GatewayIntentBits, Events, Collection, MessageFlags, Partials } = require('discord.js');
 const config = require('./config');
 const { handleMessage } = require('./messageHandler');
 const { handleVoiceStateUpdate } = require('./voiceHandler');
+const { handleReactionAdd, handleReactionRemove } = require('./reactionHandler');
 const { checkForNoShows } = require('./noShowHandler');
 const { checkAndAnnounceAll } = require('./monthlyAwards');
 
@@ -23,7 +24,15 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildVoiceStates,
+    // Needed so other people can opt into someone else's stated plan by
+    // tapping its clock reaction - see reactionHandler.js.
+    GatewayIntentBits.GuildMessageReactions,
   ],
+  // Reactions on messages this process hasn't cached (i.e. anything posted
+  // before the last restart) arrive as partials. Without these, the emoji on
+  // such a reaction comes through empty and joining an older plan silently
+  // does nothing.
+  partials: [Partials.Message, Partials.Channel, Partials.Reaction, Partials.User],
 });
 
 // --- slash commands ---
@@ -33,6 +42,7 @@ const commandFiles = [
   require('./commands/help'),
   require('./commands/cancel'),
   require('./commands/uncancel'),
+  require('./commands/track'),
   require('./commands/logHere'),
   require('./commands/awards'),
   require('./commands/awardsHere'),
@@ -64,6 +74,14 @@ client.on(Events.GuildCreate, (guild) => {
 
 client.on(Events.MessageCreate, (message) => {
   handleMessage(message).catch((err) => console.error('Error handling message:', err));
+});
+
+client.on(Events.MessageReactionAdd, (reaction, user) => {
+  handleReactionAdd(reaction, user).catch((err) => console.error('Error handling reaction add:', err));
+});
+
+client.on(Events.MessageReactionRemove, (reaction, user) => {
+  handleReactionRemove(reaction, user).catch((err) => console.error('Error handling reaction remove:', err));
 });
 
 client.on(Events.VoiceStateUpdate, (oldState, newState) => {
