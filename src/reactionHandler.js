@@ -99,10 +99,9 @@ async function resolvePartial(reaction) {
 async function resolveAmbiguity(reaction, user, question, answer, messageId, guildId) {
   planTracker.forgetAmbiguityQuestion(messageId);
 
-  const member = await reaction.message.guild.members.fetch(user.id).catch(() => null);
   planTracker.setPlan({
     userId: user.id,
-    username: member?.displayName || user.username,
+    username: await displayNameFor(reaction.message, user),
     guildId,
     textChannelId: question.textChannelId,
     targetTime: answer.targetTime,
@@ -119,14 +118,34 @@ async function resolveAmbiguity(reaction, user, question, answer, messageId, gui
   });
 
   try {
-    // Clear the two options so the message doesn't keep offering a choice
-    // that's already been made, then mark it as a normal tracked plan.
-    await reaction.message.reactions.cache.get(MINUTES_EMOJI)?.remove().catch(() => {});
-    await reaction.message.reactions.cache.get(CLOCK_EMOJI)?.remove().catch(() => {});
+    // Withdraw the bot's own two option marks so the message stops offering a
+    // choice that's already been made, then mark it as a normal tracked plan.
+    //
+    // Deliberately removes only the BOT's reaction (users.remove of our own id)
+    // rather than calling reaction.remove(), which clears that emoji for
+    // everyone and needs the Manage Messages permission this bot is not
+    // invited with. The person's own tap simply stays visible, which reads
+    // fine - it's a record of what they picked.
+    const me = reaction.client.user.id;
+    for (const emoji of [MINUTES_EMOJI, CLOCK_EMOJI]) {
+      await reaction.message.reactions.cache
+        .get(emoji)
+        ?.users.remove(me)
+        .catch(() => {});
+    }
     await reaction.message.react(WATCH_EMOJI);
   } catch (err) {
     console.warn('Could not tidy up after an answered time question:', err.message);
   }
+}
+
+// The server nickname if we can get it, falling back to the account name.
+// `message.guild` can come back null on a message resolved from a partial, so
+// this never assumes it's there - a missing nickname is cosmetic, but throwing
+// here would drop the whole plan.
+async function displayNameFor(message, user) {
+  const member = await message.guild?.members.fetch(user.id).catch(() => null);
+  return member?.displayName || user.username;
 }
 
 async function handleReactionChange(reaction, user, { removing }) {
@@ -184,10 +203,9 @@ async function handleReactionChange(reaction, user, { removing }) {
     return;
   }
 
-  const member = await reaction.message.guild.members.fetch(user.id).catch(() => null);
   planTracker.setPlan({
     userId: user.id,
-    username: member?.displayName || user.username,
+    username: await displayNameFor(reaction.message, user),
     guildId,
     textChannelId: reaction.message.channelId,
     targetTime: decision.targetTime,

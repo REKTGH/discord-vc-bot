@@ -1,8 +1,10 @@
 # Handover Spec — Discord Voice-Chat Punctuality Bot
 
-**Purpose of this document:** this project is moving from a conversational build process into Claude Code. Everything below reflects the actual state of the code as of this handover (v16, 2026-08-25) — read section 3 before changing anything that looks like an odd choice; most of them are deliberate and were arrived at by hitting a real problem first.
+**Purpose of this document:** this project moved from a conversational build process into Claude Code. Everything below reflects the actual state of the code as of **v17, 2026-08-25** — read section 3 before changing anything that looks like an odd choice; most of them are deliberate and were arrived at by hitting a real problem first.
 
-**Owner:** David (non-coder — the README at the repo root is written for him, not for a developer, and should stay that way). **Status:** live in production on Render's free tier. **Tests:** 120 passing, 0 failing (`npm test`).
+> **v17 changed a lot of what v16 described.** Hosting moved to an Oracle Cloud instance (Render is not used and its constraints no longer apply), the project is now under real git, and six features shipped. Section 6 at the bottom is the v17 delta — read it before trusting any specific claim above it.
+
+**Owner:** David (non-coder — the README at the repo root is written for him, not for a developer, and should stay that way). **Status:** live in production on an Oracle Cloud Always Free instance, run by systemd as the `bot` unit, updated by `git pull`. **Tests:** 203 passing, 0 failing (`npm test`).
 
 ---
 
@@ -215,3 +217,51 @@ None of the above block moving into Claude Code — they're just decisions nobod
 - [ ] Get explicit sign-off from the project owner on the open questions in 4.3 (Avg Time Late semantics, roast tone/threshold, dark-theme legibility) before changing any of that behavior.
 - [ ] Decide whether to stay on Render's free tier (data resets on every redeploy — currently accepted) or move to Railway (small cost, persistent volume) now that real development tooling is in play.
 - [ ] If picking up new feature work, check in with the owner first rather than assuming priority — past requests have arrived one at a time, conversationally, not as a backlog.
+
+---
+
+## 6. v17 Delta (2026-08-25)
+
+Everything in sections 1–5 above was written at v16. Where this section disagrees with them, **this section is right.**
+
+### 6.1 Hosting moved to Oracle Cloud — Render is gone
+
+The bot runs on an **Oracle Cloud Always Free** Ubuntu instance, as a systemd unit named `bot`, deployed by `git clone` + `git pull`. The owner's own crib sheet is `Update README.txt` (untracked on purpose — it holds the host IP and SSH key name, which don't belong in a public repo).
+
+Everyday loop: `ssh` in → `cd` to the bot folder → `git pull origin main` → `sudo systemctl restart bot`. Logs: `sudo journalctl -f -u bot`.
+
+**This invalidates a lot of v16's section 3.5, 4.1 and 4.2:**
+- There is **no ephemeral disk**. `results.json` and the three store JSONs survive restarts and deploys. `/leaderboard-here`, `/log-here` and `/awards-here` are set once and stay set. The v16 advice to re-run them after every deploy is obsolete.
+- The `PORT`-gated HTTP keep-alive in `index.js` stays **inert** (nothing sets `PORT`). No uptime pinger. It's kept only so the code still works on a sleeping host if it's ever moved.
+- The v16 §4.1 "unconfirmed Render deployment / `src/src` nesting" issue is **closed** — it was specific to Render's build and cannot occur from a git clone. The repo is confirmed flat at its root.
+
+### 6.2 Now under real git
+
+Previously maintained by hand through GitHub's web upload flow. It's now a normal clone of `github.com/REKTGH/discord-vc-bot`, with `.gitignore`, `.env.example` and this handover committed (they existed locally but had never been in the repo — notably `.gitignore`, which matters a lot now that the server is a live clone).
+
+Working tree was verified byte-identical to `origin/main` before any v17 work started, so nothing was lost in the transition.
+
+### 6.3 Features shipped in v17
+
+1. **New trigger phrases** — `getting on`, `game in/at`, `on in/at`. `on in/at` is **deliberately unguarded** on an explicit call by the owner: it catches "on in 10" but also fires on "the movie was on at 10". There's a test pinning that trade-off so it reads as a decision, not a bug. `/cancel` is the escape hatch.
+2. **Bare clock times** — a message that is only a time ("10:30", "9pm", "7:15 am") now tracks. Exact times always worked *with* an intent word; only the bare form was missing.
+3. **`MAX_FUTURE_HOURS`** — the hard-coded 12-hour parsing limit is now `config.maxFutureHours`.
+4. **Ambiguous bare numbers are asked about, not guessed.** A bare 1–12 could be minutes or an o'clock. `parseJoinTime` now returns null for those; `parseBareNumberAmbiguity` returns both readings, and the bot reacts ⏳/🕐 and tracks nothing until the author taps one. Answering converts the message into a normal plan message. Bare 13–180 still resolves straight to minutes.
+5. **Shared plans.** Every tracked plan carries the bot's ⏰; anyone tapping it is tracked against the same stated time, with their own verdict and no-show. Un-tapping withdraws them with `recorded: false` (opting out of someone else's plan is not flaking). `/track <when>` starts one deliberately. Needs the `GuildMessageReactions` intent and Message/Reaction/User **partials** — without the partials, reactions on pre-restart messages arrive with an empty emoji and silently do nothing.
+6. **Early scold.** Arriving `EARLY_SCOLD_THRESHOLD_MINUTES` (default 60) or more early now gets its own line pool (`EARLY_SCOLD_LINES`), mirroring the late roast. `classify()` exposes `earlyMinutes`; routing now keys off the new `isCalloutWorthy` (roast **or** early scold) so both bypass `/log-here` for the same reason.
+7. **`/uncancel`.** "nvm" is typed at friends far more than at the bot, and the detection can't tell them apart. Rather than make detection timid, undo is cheap: it restores the plan *and* removes the Cancels row — but only if one was written. `planTracker` records a `recorded` flag per cancellation (chat "nvm" → true, `/cancel` → false) so this never guesses.
+8. **Monthly leaderboards.** Standings now cover the current calendar month; `/leaderboard scope: All time` gives the full history. **Nothing is ever deleted** — `getLeaderboard` takes an optional range and simply reads less. This matters: `/awards` reads back over the previous month and would break if records were purged. The live message finalises itself at the month boundary (last edit, "live" footer dropped), stays in the channel as that month's record, and a fresh one is posted below. Rollover also runs on the existing hourly timer, so a quiet 1st doesn't leave stale standings up.
+
+### 6.4 Conventions worth keeping
+
+The v16 pattern of pulling pure decision logic out of Discord I/O held throughout: `decideReactionAction` and `decideAmbiguityAnswer` are exported and unit-tested exactly the way `chooseVerdictRouting` is. `src/commands/*` still has no dedicated tests, deliberately — same reasoning as v16 §3.3.
+
+Tests went 120 → **203**. Several existing tests were *updated rather than worked around*, because they encoded decisions v17 deliberately reversed (bare-number minutes, `on in 5` not matching, the empty-board wording, the live-store shape). Each is commented to say so.
+
+One permission note: `resolveAmbiguity` withdraws only the **bot's own** ⏳/🕐 marks (`users.remove(ownId)`), never `reaction.remove()`, which clears an emoji for everyone and needs Manage Messages — a permission this bot is not invited with.
+
+### 6.5 Still open
+
+- The three v16 §4.3 questions are **still unanswered** and were not touched: Avg Time Late semantics (late-only vs overall), whether the roast tone/threshold suits the server, and dark-theme legibility. Ask before changing any of them.
+- **Nothing in v17 has been exercised against a live Discord server yet.** All 203 tests pass and every command builds a valid payload, but the reaction flows in particular (partials, permissions, the ⏳/🕐 tidy-up) can only really be confirmed by running it. Deploy and try each one.
+- The bot's role needs **Add Reactions** and **Read Message History** for shared plans to work, on top of the **Attach Files** permission v16 already required.
