@@ -9,6 +9,7 @@
 // handled explicitly below and covered by test/timeParser.test.js.
 
 const chrono = require('chrono-node');
+const config = require('./config');
 
 // Phrases that signal "I'm telling you when I'll join voice chat".
 // A message needs at least one of these AND a parseable time before we track it,
@@ -23,6 +24,13 @@ const INTENT_PATTERNS = [
   /\bbe on\b/i,
   /\bheading (?:over|on|in|out)?\b/i,
   /\bcoming\b(?!\s+from)/i,
+  /\bgett?ing\s*on\b/i,
+  /\bgame\s+(?:in|at)\b/i,
+  // Deliberately unguarded: "on in 10" / "on at 10" is how this group actually
+  // talks, and demanding more context around it missed real plans. The cost is
+  // that an unrelated "the movie was on at 10" matches too - an accepted
+  // trade-off, and exactly what /cancel is there to undo.
+  /\bon\s+(?:in|at)\b/i,
   /\b(vc|voice\s*chat|voice\s*call)\b/i,
 ];
 
@@ -36,7 +44,9 @@ function hasCancelIntent(text) {
 
 // Ignore/ discard plans further out than this, or further in the past than this -
 // these are almost certainly unrelated mentions of a number/time, not a VC plan.
-const MAX_FUTURE_HOURS = 12;
+// How far ahead is configurable (config.maxFutureHours / MAX_FUTURE_HOURS in
+// .env) because how far ahead a group actually announces plans varies; the
+// past bound isn't, since "already happened" doesn't vary by server.
 const MAX_PAST_MINUTES = 2;
 
 function hasJoinIntent(text) {
@@ -54,12 +64,48 @@ function hasJoinIntent(text) {
 const BARE_NUMBER_MESSAGE = /^(\d{1,3})[.,!?]*$/;
 const MAX_BARE_NUMBER_MINUTES = 180;
 
-function bareNumberAsJoinPhrase(text) {
+// ...except that a bare number which is ALSO a valid 12-hour clock hour is
+// genuinely ambiguous: "10" on its own means "in 10 minutes" to some people
+// and "at 10 o'clock" to others, and nothing in the text can settle it. This
+// used to silently always mean minutes, which quietly mis-tracked every
+// "see you at 10". Numbers at or below this are handed to
+// parseBareNumberAmbiguity() instead, and the bot asks (see messageHandler);
+// anything above it is safe to read as minutes, since nobody means "at 45
+// o'clock".
+const MAX_AMBIGUOUS_BARE_NUMBER = 12;
+
+function bareNumberValue(text) {
   const match = BARE_NUMBER_MESSAGE.exec(text.trim());
   if (!match) return null;
-  const minutes = Number(match[1]);
-  if (minutes < 1 || minutes > MAX_BARE_NUMBER_MINUTES) return null;
-  return `be on in ${minutes} minutes`;
+  const value = Number(match[1]);
+  if (value < 1 || value > MAX_BARE_NUMBER_MINUTES) return null;
+  return value;
+}
+
+function bareNumberAsJoinPhrase(text) {
+  const value = bareNumberValue(text);
+  if (value === null) return null;
+  if (value <= MAX_AMBIGUOUS_BARE_NUMBER) return null; // ask instead - see parseBareNumberAmbiguity
+  return `be on in ${value} minutes`;
+}
+
+// A message that is JUST a clock time - "10:30", "10pm", "7:15 am" - is as
+// plainly a join plan as "vc at 10:30" is, but carries no intent phrase for
+// the gate above to match on. Rewriting it into a full phrase lets the normal
+// parsing path below handle it (AM/PM disambiguation included) instead of
+// duplicating any of that logic here. Unlike the bare-number case this is NOT
+// ambiguous - a colon or an am/pm suffix means a clock time and nothing else.
+const BARE_MERIDIEM_MESSAGE = /^(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m\.?[.,!?]*$/i;
+const BARE_HHMM_MESSAGE = /^(\d{1,2}):(\d{2})[.,!?]*$/;
+
+function bareClockAsJoinPhrase(text) {
+  const trimmed = text.trim();
+  const match = BARE_MERIDIEM_MESSAGE.exec(trimmed) || BARE_HHMM_MESSAGE.exec(trimmed);
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = match[2] === undefined ? 0 : Number(match[2]);
+  if (hour > 23 || minute > 59) return null;
+  return `be on at ${trimmed.replace(/[.,!?]+$/, '')}`;
 }
 
 // This bot is for "I'm joining VC right now / in a few minutes" plans, not
@@ -162,7 +208,7 @@ function closestFutureHourCandidate(hour, minute, timeZone, referenceDate) {
  */
 function parseJoinTime(text, { timezone = 'America/Los_Angeles', referenceDate = new Date() } = {}) {
   if (!text) return null;
-  const effectiveText = bareNumberAsJoinPhrase(text) || text;
+  const effectiveText = bareNumberAsJoinPhrase(text) || bareClockAsJoinPhrase(text) || text;
   if (!hasJoinIntent(effectiveText)) return null;
   if (mentionsWeekday(effectiveText)) return null;
 
@@ -186,10 +232,42 @@ function parseJoinTime(text, { timezone = 'America/Los_Angeles', referenceDate =
 
   const diffMs = target.getTime() - referenceDate.getTime();
   const diffHours = diffMs / 3600000;
-  if (diffHours > MAX_FUTURE_HOURS) return null;
+  if (diffHours > config.maxFutureHours) return null;
   if (diffMs < -MAX_PAST_MINUTES * 60000) return null;
 
   return { targetTime: target, matchedText: r.text };
+}
+
+/**
+ * The other half of the bare-number story. For a message that is nothing but
+ * an ambiguous bare number ("10"), works out both readings so the caller can
+ * ask which was meant rather than guessing. Returns null for anything else,
+ * including bare numbers too large to be a clock hour - parseJoinTime()
+ * already resolves those to minutes on its own with no prompt needed.
+ *
+ * `clock` comes back null when the o'clock reading falls outside the sane
+ * window (e.g. "11" at midday, if maxFutureHours is short): there is then
+ * only one plausible reading left, so the caller should just use `minutes`
+ * and skip asking.
+ *
+ * @param {string} text - raw message content
+ * @param {object} opts - same timezone/referenceDate options as parseJoinTime
+ * @returns {{ value: number, minutes: {targetTime: Date}, clock: {targetTime: Date}|null } | null}
+ */
+function parseBareNumberAmbiguity(text, { timezone = 'America/Los_Angeles', referenceDate = new Date() } = {}) {
+  if (!text) return null;
+  const value = bareNumberValue(text);
+  if (value === null || value > MAX_AMBIGUOUS_BARE_NUMBER) return null;
+
+  const minutesTarget = new Date(referenceDate.getTime() + value * 60000);
+  const clockTarget = closestFutureHourCandidate(value, 0, timezone, referenceDate);
+  const clockHoursOut = (clockTarget.getTime() - referenceDate.getTime()) / 3600000;
+
+  return {
+    value,
+    minutes: { targetTime: minutesTarget },
+    clock: clockHoursOut > config.maxFutureHours ? null : { targetTime: clockTarget },
+  };
 }
 
 // Returns { year, month } (month is 1-indexed, like a person would say it)
@@ -219,6 +297,7 @@ function localMonthStartUTC(year, month, timeZone) {
 
 module.exports = {
   parseJoinTime,
+  parseBareNumberAmbiguity,
   hasJoinIntent,
   hasCancelIntent,
   getTimezoneOffsetMinutes,

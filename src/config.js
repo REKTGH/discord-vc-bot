@@ -33,6 +33,19 @@ const config = {
   // for an unrelated reason.
   planExpiryHours: parseIntEnv('PLAN_EXPIRY_HOURS', 12),
 
+  // How far ahead a stated time is allowed to be before the bot decides it
+  // is not a "joining soon" plan at all and ignores it. This is the parsing
+  // limit, not the no-show limit: "vc in 20 hours" past this is treated as
+  // an unrelated mention of a number, not a plan. Raise it if your group
+  // genuinely announces plans further out than this.
+  maxFutureHours: parseIntEnv('MAX_FUTURE_HOURS', 12),
+
+  // Minutes early (or more) before the voice-join reply calls someone out
+  // for turning up absurdly early, the mirror image of roastThresholdMinutes
+  // below. Showing up an hour before you said you would is its own kind of
+  // not-keeping-your-word, so it gets its own line pool (src/roastLines.js).
+  earlyScoldThresholdMinutes: parseIntEnv('EARLY_SCOLD_THRESHOLD_MINUTES', 60),
+
   // Optional: restrict message scanning to specific text channels.
   // Comma-separated channel IDs. Leave blank in .env to scan every channel.
   allowedChannelIds: (process.env.ALLOWED_CHANNEL_IDS || '')
