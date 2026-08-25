@@ -43,7 +43,10 @@ async function handleMessage(message) {
   // No new plan in this message. If they already had one pending and this
   // looks like "nevermind"/"nvm", cancel it quietly - no no-show note later.
   if (hasCancelIntent(message.content) && planTracker.hasPlan(message.guild.id, message.author.id)) {
-    const cancelled = planTracker.cancelPlan(message.guild.id, message.author.id);
+    // recorded: true — a chat "nvm" counts as real flaking and does write a
+    // 'cancelled' row below, unlike /cancel. /uncancel uses this to know it
+    // must remove that row again if this turns out to have been an accident.
+    const cancelled = planTracker.cancelPlan(message.guild.id, message.author.id, { recorded: true });
     if (cancelled) {
       recordResult({
         guildId: message.guild.id,

@@ -16,7 +16,10 @@ const data = new SlashCommandBuilder()
   .setDescription('Erase your currently pending join plan, if the bot tracked something wrong');
 
 async function execute(interaction) {
-  const plan = planTracker.cancelPlan(interaction.guildId, interaction.user.id);
+  // recorded: false — see the note above about why /cancel stays off the
+  // Cancels column. /uncancel reads this back so undoing this doesn't try to
+  // delete a leaderboard row that was never written.
+  const plan = planTracker.cancelPlan(interaction.guildId, interaction.user.id, { recorded: false });
 
   if (!plan) {
     await interaction.reply({

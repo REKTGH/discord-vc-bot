@@ -32,6 +32,7 @@ const commandFiles = [
   require('./commands/leaderboardHere'),
   require('./commands/help'),
   require('./commands/cancel'),
+  require('./commands/uncancel'),
   require('./commands/logHere'),
   require('./commands/awards'),
   require('./commands/awardsHere'),

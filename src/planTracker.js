@@ -19,14 +19,51 @@ function hasPlan(guildId, userId) {
   return pending.has(key(guildId, userId));
 }
 
+// The most recent cancellation per user, kept only so an accidental one can be
+// taken back (see restoreLastCancelled and /uncancel). "nvm" gets typed at a
+// friend mid-conversation far more often than it gets typed at the bot, and
+// before this the bot would silently eat a real plan and log a Cancels mark
+// for it. Only the latest cancellation is kept: undo is for the mistake you
+// just made, not an archive.
+// key: `${guildId}:${userId}` -> { plan, recorded, cancelledAt }
+const lastCancelled = new Map();
+
 // Explicit cancellation (e.g. someone says "nevermind", or runs /cancel).
 // Returns the removed plan if there was one pending, otherwise null.
-function cancelPlan(guildId, userId) {
+//
+// `recorded` says whether the caller also wrote a 'cancelled' row to the
+// leaderboard for this. A chat "nvm" does (it counts as real flaking);
+// /cancel deliberately doesn't (it's for correcting the bot). Remembering
+// which it was is what lets /uncancel put the leaderboard back exactly as
+// it found it, without guessing.
+function cancelPlan(guildId, userId, { recorded = false } = {}) {
   const k = key(guildId, userId);
   const plan = pending.get(k);
   if (!plan) return null;
   pending.delete(k);
+  lastCancelled.set(k, { plan, recorded, cancelledAt: Date.now() });
   return plan;
+}
+
+// Whether there's a cancellation this user could still take back.
+function hasRestorableCancellation(guildId, userId) {
+  const entry = lastCancelled.get(key(guildId, userId));
+  return Boolean(entry) && !isPastNoShowWindow(entry.plan);
+}
+
+// Puts the most recently cancelled plan back as pending. Returns
+// { plan, recorded } so the caller knows whether it also needs to remove the
+// matching leaderboard row, or null if there's nothing to restore - including
+// when the plan has since aged past the no-show window, where putting it back
+// would only produce an instant no-show note.
+function restoreLastCancelled(guildId, userId) {
+  const k = key(guildId, userId);
+  const entry = lastCancelled.get(k);
+  if (!entry) return null;
+  lastCancelled.delete(k);
+  if (isPastNoShowWindow(entry.plan)) return null;
+  pending.set(k, entry.plan);
+  return { plan: entry.plan, recorded: entry.recorded };
 }
 
 function isPastNoShowWindow(plan, now = Date.now()) {
@@ -64,4 +101,13 @@ function pendingCount() {
   return pending.size;
 }
 
-module.exports = { setPlan, hasPlan, cancelPlan, consumePlan, takeExpired, pendingCount };
+module.exports = {
+  setPlan,
+  hasPlan,
+  cancelPlan,
+  hasRestorableCancellation,
+  restoreLastCancelled,
+  consumePlan,
+  takeExpired,
+  pendingCount,
+};

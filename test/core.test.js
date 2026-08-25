@@ -31,7 +31,7 @@ const { classify, isRoastWorthy, isEarlyScoldWorthy, isCalloutWorthy, buildVerdi
 const { ROAST_LINES, pickRoastLine, EARLY_SCOLD_LINES, pickEarlyScoldLine } = require('../src/roastLines');
 const { chooseVerdictRouting } = require('../src/voiceHandler');
 const planTracker = require('../src/planTracker');
-const { recordResult, getLeaderboard, getMonthlyAwards } = require('../src/db');
+const { recordResult, removeLastResult, getLeaderboard, getMonthlyAwards } = require('../src/db');
 const { buildLeaderboardPayload } = require('../src/leaderboardView');
 const { renderLeaderboardPng, buildTableData, placementDisplay, formatAvgLateLabel, lateCountCell, ordinal } = require('../src/leaderboardImage');
 const {
@@ -246,6 +246,62 @@ ok('cancelPlan removes a pending plan and returns it (or null if nothing was pen
   assert.strictEqual(planTracker.hasPlan('g1', 'u5'), false);
   assert.strictEqual(planTracker.cancelPlan('g1', 'u5'), null); // nothing left to cancel
 });
+
+console.log('\n=== planTracker: undoing an accidental cancellation (v17) ===');
+ok('restoreLastCancelled puts the plan back as pending', () => {
+  const targetTime = new Date();
+  planTracker.setPlan({ userId: 'u6', username: 'Ray', guildId: 'g1', textChannelId: 'c1', targetTime, announcedAt: new Date(), rawText: 'vc in 10' });
+  planTracker.cancelPlan('g1', 'u6', { recorded: true });
+  assert.strictEqual(planTracker.hasPlan('g1', 'u6'), false, 'should be gone right after cancelling');
+
+  const restored = planTracker.restoreLastCancelled('g1', 'u6');
+  assert.ok(restored, 'expected something to restore');
+  assert.strictEqual(restored.plan.username, 'Ray');
+  assert.strictEqual(restored.recorded, true, 'a chat nvm records a Cancels row, so undo must know to remove it');
+  assert.strictEqual(planTracker.hasPlan('g1', 'u6'), true, 'plan should be pending again');
+});
+ok('restoring is a one-shot - the same cancellation cannot be undone twice', () => {
+  planTracker.setPlan({ userId: 'u7', username: 'Ivy', guildId: 'g1', textChannelId: 'c1', targetTime: new Date(), announcedAt: new Date(), rawText: 'omw' });
+  planTracker.cancelPlan('g1', 'u7', { recorded: true });
+  assert.ok(planTracker.restoreLastCancelled('g1', 'u7'));
+  assert.strictEqual(planTracker.restoreLastCancelled('g1', 'u7'), null);
+});
+ok('nothing to restore when the user never cancelled anything', () => {
+  assert.strictEqual(planTracker.restoreLastCancelled('g1', 'never-existed'), null);
+});
+ok('a /cancel-style cancellation restores with recorded:false, so no row gets deleted', () => {
+  planTracker.setPlan({ userId: 'u8', username: 'Max', guildId: 'g1', textChannelId: 'c1', targetTime: new Date(), announcedAt: new Date(), rawText: 'omw' });
+  planTracker.cancelPlan('g1', 'u8', { recorded: false });
+  const restored = planTracker.restoreLastCancelled('g1', 'u8');
+  assert.ok(restored);
+  assert.strictEqual(restored.recorded, false);
+});
+ok('cancelPlan defaults to recorded:false when the caller says nothing', () => {
+  planTracker.setPlan({ userId: 'u9', username: 'Nia', guildId: 'g1', textChannelId: 'c1', targetTime: new Date(), announcedAt: new Date(), rawText: 'omw' });
+  planTracker.cancelPlan('g1', 'u9');
+  assert.strictEqual(planTracker.restoreLastCancelled('g1', 'u9').recorded, false);
+});
+ok('a cancellation too old to matter is not restorable (target 4h ago, window=3h)', () => {
+  const fourHoursAgo = new Date(Date.now() - 4 * 60 * 60 * 1000);
+  planTracker.setPlan({ userId: 'u10', username: 'Old', guildId: 'g1', textChannelId: 'c1', targetTime: fourHoursAgo, announcedAt: fourHoursAgo, rawText: 'omw' });
+  planTracker.cancelPlan('g1', 'u10', { recorded: true });
+  assert.strictEqual(planTracker.hasRestorableCancellation('g1', 'u10'), false);
+  assert.strictEqual(planTracker.restoreLastCancelled('g1', 'u10'), null, 'restoring would only produce an instant no-show');
+});
+ok('hasRestorableCancellation reflects whether an undo is available', () => {
+  assert.strictEqual(planTracker.hasRestorableCancellation('g1', 'u11'), false);
+  planTracker.setPlan({ userId: 'u11', username: 'Ash', guildId: 'g1', textChannelId: 'c1', targetTime: new Date(), announcedAt: new Date(), rawText: 'omw' });
+  planTracker.cancelPlan('g1', 'u11', { recorded: true });
+  assert.strictEqual(planTracker.hasRestorableCancellation('g1', 'u11'), true);
+  planTracker.restoreLastCancelled('g1', 'u11');
+  assert.strictEqual(planTracker.hasRestorableCancellation('g1', 'u11'), false);
+});
+ok('cancellations are tracked per user, not shared', () => {
+  planTracker.setPlan({ userId: 'u12', username: 'Ann', guildId: 'g1', textChannelId: 'c1', targetTime: new Date(), announcedAt: new Date(), rawText: 'omw' });
+  planTracker.cancelPlan('g1', 'u12', { recorded: true });
+  assert.strictEqual(planTracker.restoreLastCancelled('g1', 'u13'), null, 'another user must not be able to claim it');
+  assert.ok(planTracker.restoreLastCancelled('g1', 'u12'));
+});
 ok('cancelled plan never surfaces as a no-show', () => {
   const twentyHoursAgoTarget = new Date(Date.now() - 20 * 60 * 60 * 1000); // well past the 3h test window
   planTracker.setPlan({ userId: 'u6', username: 'Jo', guildId: 'g1', textChannelId: 'c1', targetTime: twentyHoursAgoTarget, announcedAt: twentyHoursAgoTarget, rawText: 'omw' });
@@ -333,6 +389,37 @@ ok('a user with only cancelled records is excluded from ranking (nothing to rank
   recordResult({ guildId: 'gOnlyCancel', userId: 'flaky', username: 'Flaky', targetTime: now, actualTime: null, diffSeconds: null, status: 'cancelled', rawText: 'nvm' });
   const board = getLeaderboard('gOnlyCancel', 10);
   assert.strictEqual(board.length, 0);
+});
+
+console.log('\n=== db.removeLastResult (v17, backs /uncancel) ===');
+// A user with only cancellations is excluded from getLeaderboard (nothing to
+// rank on), so each of these gets one real join first to make the Cancels
+// column observable through the public API rather than by reading the file.
+function cancelsOnBoard(guildId, userId) {
+  const row = getLeaderboard(guildId, 50).find((r) => r.userId === userId);
+  return row ? row.cancelCount : null;
+}
+ok('removes only the most recent matching row, leaving earlier ones alone', () => {
+  const now = new Date();
+  recordResult({ guildId: 'gUndo', userId: 'z', username: 'Zed', targetTime: now, actualTime: now, diffSeconds: 0, status: 'on_time', rawText: 'a real join' });
+  const base = { guildId: 'gUndo', userId: 'z', username: 'Zed', targetTime: now, actualTime: null, diffSeconds: null, status: 'cancelled' };
+  recordResult({ ...base, rawText: 'first nvm' });
+  recordResult({ ...base, rawText: 'second nvm' });
+
+  assert.strictEqual(cancelsOnBoard('gUndo', 'z'), 2, 'expected both cancellations to count first');
+  assert.strictEqual(removeLastResult('gUndo', 'z', 'cancelled'), true);
+  assert.strictEqual(cancelsOnBoard('gUndo', 'z'), 1, 'expected exactly one cancellation to survive');
+});
+ok('reports false when there is nothing matching to remove', () => {
+  assert.strictEqual(removeLastResult('gUndo', 'nobody', 'cancelled'), false);
+  assert.strictEqual(removeLastResult('gUndo', 'z', 'no_show'), false, 'status must match too');
+});
+ok('does not reach across users or guilds', () => {
+  const now = new Date();
+  recordResult({ guildId: 'gUndoA', userId: 'shared', username: 'S', targetTime: now, actualTime: null, diffSeconds: null, status: 'cancelled', rawText: 'x' });
+  assert.strictEqual(removeLastResult('gUndoB', 'shared', 'cancelled'), false, 'wrong guild must not match');
+  assert.strictEqual(removeLastResult('gUndoA', 'other', 'cancelled'), false, 'wrong user must not match');
+  assert.strictEqual(removeLastResult('gUndoA', 'shared', 'cancelled'), true);
 });
 
 console.log('\n=== db.getMonthlyAwards ===');

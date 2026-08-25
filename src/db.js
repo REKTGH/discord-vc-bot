@@ -49,6 +49,26 @@ function recordResult(result) {
   saveAll(records);
 }
 
+// Deletes the most recent record matching a guild/user/status and reports
+// whether it found one. The only caller is /uncancel, undoing an accidental
+// "nvm": that "nvm" already wrote a 'cancelled' row, and leaving it behind
+// would keep penalising someone on the Cancels column for a cancellation
+// they just took back. Scanning from the end matters - it must remove the
+// row the person is actually undoing, not the oldest one that happens to
+// look like it.
+function removeLastResult(guildId, userId, status) {
+  const records = loadAll();
+  for (let i = records.length - 1; i >= 0; i--) {
+    const r = records[i];
+    if (r.guildId === guildId && r.userId === userId && r.status === status) {
+      records.splice(i, 1);
+      saveAll(records);
+      return true;
+    }
+  }
+  return false;
+}
+
 // Aggregated per-user stats for a guild, ranked for /leaderboard:
 // latest average lateness first, down to least late (earliest) last.
 // Ties broken by whoever has more tracked joins (more data behind the number).
@@ -157,4 +177,4 @@ function getMonthlyAwards(guildId, { startMs, endMs }) {
   };
 }
 
-module.exports = { recordResult, getLeaderboard, getMonthlyAwards };
+module.exports = { recordResult, removeLastResult, getLeaderboard, getMonthlyAwards };
