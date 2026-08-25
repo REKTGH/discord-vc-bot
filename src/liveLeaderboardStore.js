@@ -30,9 +30,12 @@ function get(guildId) {
   return loadAll()[guildId] || null;
 }
 
-function set(guildId, { channelId, messageId }) {
+// `yearMonth` ("YYYY-MM") records which month the tracked message is showing,
+// so a refresh can tell when the calendar has rolled over and it's time to
+// leave that message alone and start a fresh one - see liveLeaderboard.js.
+function set(guildId, { channelId, messageId, yearMonth = null }) {
   const data = loadAll();
-  data[guildId] = { channelId, messageId };
+  data[guildId] = { channelId, messageId, yearMonth };
   saveAll(data);
 }
 

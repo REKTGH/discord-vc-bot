@@ -75,8 +75,17 @@ function removeLastResult(guildId, userId, status) {
 // No-shows and cancellations don't count toward the average (there's no "how
 // late" to average in - they never showed, or called it off beforehand) but
 // are each tallied separately and shown alongside the ranking.
-function getLeaderboard(guildId, limit = 10) {
-  const records = loadAll().filter((r) => r.guildId === guildId);
+// An optional { startMs, endMs } range narrows this to records created in
+// that window - what the monthly leaderboard reset is built on. Nothing is
+// ever deleted at a month boundary: the history stays in results.json (the
+// awards feature reads back over it, and an all-time view is still one
+// command away), the default view just stops reaching past the 1st.
+function getLeaderboard(guildId, limit = 10, range = null) {
+  const records = loadAll().filter((r) => {
+    if (r.guildId !== guildId) return false;
+    if (!range) return true;
+    return r.createdAt >= range.startMs && r.createdAt < range.endMs;
+  });
 
   const byUser = new Map();
   function statsFor(r) {

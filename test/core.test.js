@@ -40,6 +40,7 @@ const {
   monthKey, monthLabel, formatTotalLateDuration, buildMonthlyAwardsEmbed,
 } = require('../src/monthlyAwards');
 const liveLeaderboardStore = require('../src/liveLeaderboardStore');
+const liveLeaderboard = require('../src/liveLeaderboard');
 const logChannelStore = require('../src/logChannelStore');
 const awardsChannelStore = require('../src/awardsChannelStore');
 
@@ -548,6 +549,68 @@ ok('does not reach across users or guilds', () => {
   assert.strictEqual(removeLastResult('gUndoA', 'shared', 'cancelled'), true);
 });
 
+console.log('\n=== db.getLeaderboard: monthly scoping (v17) ===');
+ok('a date range narrows the board to records created inside it', () => {
+  const now = new Date();
+  const nowMs = Date.now();
+  recordResult({ guildId: 'gScope', userId: 'x', username: 'X', targetTime: now, actualTime: now, diffSeconds: 60, status: 'late', rawText: 'x' });
+
+  const inRange = getLeaderboard('gScope', 10, { startMs: nowMs - 60000, endMs: nowMs + 60000 });
+  assert.strictEqual(inRange.length, 1, 'a record created just now should fall in a range bracketing now');
+
+  const beforeRange = getLeaderboard('gScope', 10, { startMs: 0, endMs: nowMs - 60000 });
+  assert.strictEqual(beforeRange.length, 0, 'a range entirely in the past should exclude it');
+});
+ok('no range means all time, exactly as before', () => {
+  assert.strictEqual(getLeaderboard('gScope', 10).length, 1);
+  assert.strictEqual(getLeaderboard('gScope', 10, null).length, 1);
+});
+ok('scoping filters, it never deletes - the record is still there for the all-time view', () => {
+  const past = getLeaderboard('gScope', 10, { startMs: 0, endMs: 1 });
+  assert.strictEqual(past.length, 0, 'not visible in that window');
+  assert.strictEqual(getLeaderboard('gScope', 10).length, 1, 'but still on record');
+});
+
+console.log('\n=== leaderboardView: monthly vs all-time (v17) ===');
+ok('the monthly title names the month, the all-time one says so', () => {
+  const monthly = buildLeaderboardPayload('gTitles');
+  const allTime = buildLeaderboardPayload('gTitles', { scope: 'all' });
+  assert.match(monthly.embeds[0].data.title, /Punctuality Leaderboard — \w+ \d{4}$/);
+  assert.match(allTime.embeds[0].data.title, /All Time$/);
+});
+ok('an explicit month is honoured rather than always showing the current one', () => {
+  const payload = buildLeaderboardPayload('gTitles', { yearMonth: { year: 2026, month: 1 } });
+  assert.match(payload.embeds[0].data.title, /January 2026/);
+});
+ok('a record only shows up in its own month, not a neighbouring one', () => {
+  const now = new Date();
+  recordResult({ guildId: 'gMonthView', userId: 'y', username: 'Y', targetTime: now, actualTime: now, diffSeconds: 30, status: 'late', rawText: 'x' });
+  const thisMonth = buildLeaderboardPayload('gMonthView');
+  assert.strictEqual(thisMonth.files.length, 1, 'expected an image for the month it happened in');
+
+  // January 2020 is safely before any record this suite creates.
+  const longAgo = buildLeaderboardPayload('gMonthView', { yearMonth: { year: 2020, month: 1 } });
+  assert.strictEqual(longAgo.files.length, 0, 'expected an empty board for an unrelated month');
+});
+ok('the live footer mentions the monthly reset only on a monthly board', () => {
+  const monthly = buildLeaderboardPayload('gTitles', { live: true });
+  const allTime = buildLeaderboardPayload('gTitles', { live: true, scope: 'all' });
+  assert.match(monthly.embeds[0].data.footer.text, /Resets at the start of each month/);
+  assert.doesNotMatch(allTime.embeds[0].data.footer.text, /Resets/);
+});
+
+console.log('\n=== liveLeaderboard month keys (v17) ===');
+ok('monthKey pads the month so keys compare as plain strings', () => {
+  assert.strictEqual(liveLeaderboard.monthKey({ year: 2026, month: 1 }), '2026-01');
+  assert.strictEqual(liveLeaderboard.monthKey({ year: 2026, month: 12 }), '2026-12');
+  assert.ok('2026-01' < '2026-02', 'padded keys must sort correctly as strings');
+});
+ok('parseMonthKey is the exact inverse of monthKey', () => {
+  for (const ym of [{ year: 2026, month: 1 }, { year: 2026, month: 8 }, { year: 2025, month: 12 }]) {
+    assert.deepStrictEqual(liveLeaderboard.parseMonthKey(liveLeaderboard.monthKey(ym)), ym);
+  }
+});
+
 console.log('\n=== db.getMonthlyAwards ===');
 ok('only counts records whose createdAt falls within [startMs, endMs)', () => {
   const now = new Date();
@@ -729,8 +792,13 @@ ok('truncation caps how much an extremely long username can widen the image', ()
 });
 
 console.log('\n=== leaderboardView.buildLeaderboardPayload ===');
-ok('empty leaderboard has a "no data yet" description and no attached image', () => {
+ok('empty leaderboard has a "nothing yet" description and no attached image', () => {
   const payload = buildLeaderboardPayload('gEmptyView');
+  assert.match(payload.embeds[0].data.description, /Nothing tracked yet/);
+  assert.strictEqual(payload.files.length, 0);
+});
+ok('an empty all-time board keeps the original wording (nothing has ever happened)', () => {
+  const payload = buildLeaderboardPayload('gEmptyView', { scope: 'all' });
   assert.match(payload.embeds[0].data.description, /No data yet/);
   assert.strictEqual(payload.files.length, 0);
 });
@@ -757,17 +825,27 @@ ok('get on an unset guild returns null', () => {
 ok('set then get roundtrips channelId/messageId', () => {
   liveLeaderboardStore.set('gLive', { channelId: 'chan1', messageId: 'msg1' });
   const tracked = liveLeaderboardStore.get('gLive');
-  assert.deepStrictEqual(tracked, { channelId: 'chan1', messageId: 'msg1' });
+  assert.deepStrictEqual(tracked, { channelId: 'chan1', messageId: 'msg1', yearMonth: null });
 });
 ok('setting again for the same guild overwrites (moves) the tracked location', () => {
   liveLeaderboardStore.set('gLive', { channelId: 'chan2', messageId: 'msg2' });
   const tracked = liveLeaderboardStore.get('gLive');
-  assert.deepStrictEqual(tracked, { channelId: 'chan2', messageId: 'msg2' });
+  assert.deepStrictEqual(tracked, { channelId: 'chan2', messageId: 'msg2', yearMonth: null });
 });
 ok('tracking is isolated per guild', () => {
   liveLeaderboardStore.set('gLiveOther', { channelId: 'chanX', messageId: 'msgX' });
-  assert.deepStrictEqual(liveLeaderboardStore.get('gLive'), { channelId: 'chan2', messageId: 'msg2' });
-  assert.deepStrictEqual(liveLeaderboardStore.get('gLiveOther'), { channelId: 'chanX', messageId: 'msgX' });
+  assert.deepStrictEqual(liveLeaderboardStore.get('gLive'), { channelId: 'chan2', messageId: 'msg2', yearMonth: null });
+  assert.deepStrictEqual(liveLeaderboardStore.get('gLiveOther'), { channelId: 'chanX', messageId: 'msgX', yearMonth: null });
+});
+// The month marker is what tells a refresh that the calendar has turned over
+// and it should leave that message alone and start a fresh one (v17).
+ok('the tracked month round-trips when one is given', () => {
+  liveLeaderboardStore.set('gLiveMonth', { channelId: 'c', messageId: 'm', yearMonth: '2026-08' });
+  assert.deepStrictEqual(liveLeaderboardStore.get('gLiveMonth'), { channelId: 'c', messageId: 'm', yearMonth: '2026-08' });
+});
+ok('an entry stored before monthly boards existed reads back with a null month, not undefined', () => {
+  liveLeaderboardStore.set('gLiveLegacy', { channelId: 'c', messageId: 'm' });
+  assert.strictEqual(liveLeaderboardStore.get('gLiveLegacy').yearMonth, null);
 });
 
 console.log('\n=== logChannelStore ===');

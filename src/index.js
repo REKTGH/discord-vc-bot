@@ -8,6 +8,7 @@ const { handleVoiceStateUpdate } = require('./voiceHandler');
 const { handleReactionAdd, handleReactionRemove } = require('./reactionHandler');
 const { checkForNoShows } = require('./noShowHandler');
 const { checkAndAnnounceAll } = require('./monthlyAwards');
+const liveLeaderboard = require('./liveLeaderboard');
 
 if (!config.token) {
   console.error(
@@ -118,6 +119,12 @@ setInterval(() => {
 // over, so this stays on a separate, coarser timer.
 setInterval(() => {
   checkAndAnnounceAll(client).catch((err) => console.error('Error checking monthly awards:', err));
+  // Same hourly cadence, same reason: the live leaderboard is per calendar
+  // month, and a quiet 1st shouldn't leave last month's standings on display
+  // just because nobody happened to join voice yet.
+  liveLeaderboard
+    .checkForMonthRolloverAll(client)
+    .catch((err) => console.error('Error rolling over live leaderboards:', err));
 }, 60 * 60 * 1000);
 
 process.on('unhandledRejection', (err) => console.error('Unhandled promise rejection:', err));

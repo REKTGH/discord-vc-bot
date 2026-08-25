@@ -295,6 +295,18 @@ function localMonthStartUTC(year, month, timeZone) {
   return guessUTC;
 }
 
+// The [start, end) millisecond range covering one whole calendar month in
+// `timeZone`, as plain numbers. Both the monthly awards and the monthly
+// leaderboard reset need exactly this, and getting the month boundary right
+// (DST included) is fiddly enough that it should exist in one place only.
+function localMonthRange({ year, month }, timeZone) {
+  const next = month === 12 ? { year: year + 1, month: 1 } : { year, month: month + 1 };
+  return {
+    startMs: localMonthStartUTC(year, month, timeZone),
+    endMs: localMonthStartUTC(next.year, next.month, timeZone),
+  };
+}
+
 module.exports = {
   parseJoinTime,
   parseBareNumberAmbiguity,
@@ -304,4 +316,5 @@ module.exports = {
   normalizeShorthand,
   localYearMonth,
   localMonthStartUTC,
+  localMonthRange,
 };
