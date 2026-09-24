@@ -72,6 +72,18 @@ check('no intent keyword', 'the meeting is at 9pm', morning, null);
 check('intent keyword but no time', 'omw', morning, null);
 check('unrelated number', 'random message about 9 apples', morning, null);
 check('far future date mention ignored', 'joining next friday at 9pm', morning, null);
+
+// Relative hours past MAX_FUTURE_HOURS (12) are ignored however the unit is
+// written - a unit glued to the number ("13h") used to be re-snapped to the
+// nearest clock hour, so it slipped past the bound as ~1 hour away.
+check('on in 13 hours is out of range', 'on in 13 hours', morning, null);
+check('on in 13h is out of range', 'on in 13h', morning, null);
+check('on in 13hrs is out of range', 'on in 13hrs', morning, null);
+check('be on in 13hours is out of range', 'be on in 13hours', morning, null);
+check('on in 13.5 hours is out of range, not 13 minutes', 'on in 13.5 hours', morning, null);
+check('in 2h is exactly two hours out', 'joining in 2h', morning, '13:00');
+check('in 11h is still within range', 'on in 11h', morning, '22:00');
+check('in 1h30m', 'on in 1h30m', morning, '12:30');
 check('bot noise: pure emoji', '😀😀😀', morning, null);
 
 console.log('\n=== "be on in N" and other bare-number-implies-minutes phrasing ===');

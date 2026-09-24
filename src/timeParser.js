@@ -133,9 +133,10 @@ function normalizeShorthand(text) {
   // Bare "in 10" with nothing but punctuation (or the end of the message)
   // after the number - assume minutes, the near-universal casual meaning
   // ("be on in 10" == "in 10 minutes"). Anchored to end-of-clause so this
-  // doesn't touch something like "in 10 more minutes" or "in 10 years".
+  // doesn't touch something like "in 10 more minutes" or "in 10 years". A "."
+  // only ends the clause when no digit follows, so "in 13.5 hours" is left alone.
   out = out.replace(
-    /\bin\s+(\d{1,3})\b(?=\s*(?:[,.!?;]|$))/gi,
+    /\bin\s+(\d{1,3})\b(?=\s*(?:[,!?;]|\.(?!\d)|$))/gi,
     (_match, num) => `in ${num} minutes`
   );
 
@@ -224,7 +225,12 @@ function parseJoinTime(text, { timezone = 'America/Los_Angeles', referenceDate =
 
   let target = r.start.date();
 
-  const isDurationPhrase = /\b(minute|minutes|min|mins|hour|hours|hr|hrs|second|seconds|sec|secs)\b/i.test(r.text);
+  // A relative duration ("in 13h") is already the exact target and must not be
+  // re-snapped to the nearest clock hour below - that turned "on in 13h" into
+  // ~1 hour from now, slipping it past the maxFutureHours check. chrono's own
+  // tag is the reliable signal; the regex misses units glued to the number.
+  const isDurationPhrase = r.start.tags().has('result/relativeDate')
+    || /\b(minute|minutes|min|mins|hour|hours|hr|hrs|second|seconds|sec|secs)\b/i.test(r.text);
   const hasMeridiemText = /\b(am|pm|a\.m\.|p\.m\.)\b/i.test(r.text);
   if (!hasMeridiemText && !isDurationPhrase) {
     target = closestFutureHourCandidate(hour, minute, timezone, referenceDate);
