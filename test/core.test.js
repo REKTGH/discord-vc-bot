@@ -10,11 +10,13 @@ const testDbPath = path.join(__dirname, '.tmp-test.json');
 const testLivePath = path.join(__dirname, '.tmp-test-live.json');
 const testLogChannelPath = path.join(__dirname, '.tmp-test-log-channel.json');
 const testAwardsChannelPath = path.join(__dirname, '.tmp-test-awards-channel.json');
+const testUserTimezonePath = path.join(__dirname, '.tmp-test-user-timezones.json');
 for (const p of [
   testDbPath, `${testDbPath}.tmp`,
   testLivePath, `${testLivePath}.tmp`,
   testLogChannelPath, `${testLogChannelPath}.tmp`,
   testAwardsChannelPath, `${testAwardsChannelPath}.tmp`,
+  testUserTimezonePath, `${testUserTimezonePath}.tmp`,
 ]) {
   if (fs.existsSync(p)) fs.unlinkSync(p);
 }
@@ -22,12 +24,14 @@ process.env.DB_PATH = testDbPath;
 process.env.LIVE_LEADERBOARD_PATH = testLivePath;
 process.env.LOG_CHANNEL_PATH = testLogChannelPath;
 process.env.AWARDS_CHANNEL_PATH = testAwardsChannelPath;
+process.env.USER_TIMEZONE_PATH = testUserTimezonePath;
+process.env.BOT_TIMEZONE = 'America/Los_Angeles';
 process.env.PLAN_EXPIRY_HOURS = '3';
 process.env.GRACE_PERIOD_MINUTES = '2';
 process.env.ROAST_THRESHOLD_MINUTES = '30';
 process.env.EARLY_SCOLD_THRESHOLD_MINUTES = '60';
 
-const { classify, isRoastWorthy, isEarlyScoldWorthy, isCalloutWorthy, buildVerdictMessage } = require('../src/verdict');
+const { classify, formatClock, isRoastWorthy, isEarlyScoldWorthy, isCalloutWorthy, buildVerdictMessage } = require('../src/verdict');
 const { ROAST_LINES, pickRoastLine, EARLY_SCOLD_LINES, pickEarlyScoldLine } = require('../src/roastLines');
 const { chooseVerdictRouting } = require('../src/voiceHandler');
 const { WATCH_EMOJI, MINUTES_EMOJI, CLOCK_EMOJI, decideReactionAction, decideAmbiguityAnswer } = require('../src/reactionHandler');
@@ -43,6 +47,7 @@ const liveLeaderboardStore = require('../src/liveLeaderboardStore');
 const liveLeaderboard = require('../src/liveLeaderboard');
 const logChannelStore = require('../src/logChannelStore');
 const awardsChannelStore = require('../src/awardsChannelStore');
+const userTimezoneStore = require('../src/userTimezoneStore');
 
 // PNG signature (8 bytes) + IHDR chunk length/type (8 bytes) precede the
 // width/height fields in every PNG file - see the PNG spec's IHDR layout.
@@ -122,6 +127,23 @@ ok('no early-scold line phrases the {minutes} count as lateness', () => {
   for (const line of EARLY_SCOLD_LINES) {
     assert.ok(!/\{minutes\}\s*(?:minutes?|mins?)?\s*late\b/i.test(line), `early line calls {minutes} lateness: ${line}`);
   }
+});
+
+console.log('\n=== verdict.formatClock ===');
+ok('formats as a Discord timestamp tag, so each viewer sees their own local time', () => {
+  assert.strictEqual(formatClock(new Date('2026-08-17T21:00:00Z')), `<t:${Date.UTC(2026, 7, 17, 21) / 1000}:t>`);
+});
+ok('drops milliseconds rather than rounding into the next second', () => {
+  assert.strictEqual(formatClock(new Date('2026-08-17T21:00:00.999Z')), `<t:${Date.UTC(2026, 7, 17, 21) / 1000}:t>`);
+});
+ok('the verdict message carries both times as timestamp tags', () => {
+  const msg = buildVerdictMessage(classify(10 * 60 * 1000), {
+    mention: '<@u1>',
+    targetTime: new Date('2026-08-17T21:00:00Z'),
+    actualTime: new Date('2026-08-17T21:10:00Z'),
+  });
+  assert.ok(msg.includes(`said <t:${Date.UTC(2026, 7, 17, 21) / 1000}:t>`), msg);
+  assert.ok(msg.includes(`joined <t:${Date.UTC(2026, 7, 17, 21, 10) / 1000}:t>`), msg);
 });
 
 console.log('\n=== verdict.buildVerdictMessage ===');
@@ -934,12 +956,53 @@ ok('tracking is isolated per guild', () => {
   assert.deepStrictEqual(awardsChannelStore.get('gAwardsOther'), { channelId: 'chanX', lastAnnouncedMonth: '2026-01' });
 });
 
+console.log('\n=== userTimezoneStore ===');
+ok('someone who never set a zone has none, and resolves to BOT_TIMEZONE', () => {
+  assert.strictEqual(userTimezoneStore.get('uNeverSet'), null);
+  assert.strictEqual(userTimezoneStore.resolve('uNeverSet'), 'America/Los_Angeles');
+});
+ok('set then get/resolve roundtrips the zone', () => {
+  userTimezoneStore.set('uTz', 'America/New_York');
+  assert.strictEqual(userTimezoneStore.get('uTz'), 'America/New_York');
+  assert.strictEqual(userTimezoneStore.resolve('uTz'), 'America/New_York');
+});
+ok('the setting is written to disk, not only kept in memory', () => {
+  assert.strictEqual(JSON.parse(fs.readFileSync(testUserTimezonePath, 'utf8')).uTz, 'America/New_York');
+});
+ok('zones are kept per person', () => {
+  userTimezoneStore.set('uTzOther', 'Europe/London');
+  assert.strictEqual(userTimezoneStore.get('uTz'), 'America/New_York');
+  assert.strictEqual(userTimezoneStore.get('uTzOther'), 'Europe/London');
+});
+ok('clear goes back to the server default without touching anyone else', () => {
+  userTimezoneStore.clear('uTz');
+  assert.strictEqual(userTimezoneStore.get('uTz'), null);
+  assert.strictEqual(userTimezoneStore.resolve('uTz'), 'America/Los_Angeles');
+  assert.strictEqual(userTimezoneStore.get('uTzOther'), 'Europe/London');
+});
+ok('normalizeZone accepts real zone names, fixing case and spaces', () => {
+  assert.strictEqual(userTimezoneStore.normalizeZone('America/New_York'), 'America/New_York');
+  assert.strictEqual(userTimezoneStore.normalizeZone('america/new york'), 'America/New_York');
+  assert.strictEqual(userTimezoneStore.normalizeZone('  Europe/London  '), 'Europe/London');
+});
+ok('normalizeZone understands common plain-English names', () => {
+  assert.strictEqual(userTimezoneStore.normalizeZone('EST'), 'America/New_York');
+  assert.strictEqual(userTimezoneStore.normalizeZone('pacific'), 'America/Los_Angeles');
+  assert.strictEqual(userTimezoneStore.normalizeZone('Central'), 'America/Chicago');
+});
+ok('normalizeZone rejects anything that is not a timezone', () => {
+  assert.strictEqual(userTimezoneStore.normalizeZone('Narnia/Cair_Paravel'), null);
+  assert.strictEqual(userTimezoneStore.normalizeZone('reset'), null);
+  assert.strictEqual(userTimezoneStore.normalizeZone(''), null);
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
 for (const p of [
   testDbPath, `${testDbPath}.tmp`,
   testLivePath, `${testLivePath}.tmp`,
   testLogChannelPath, `${testLogChannelPath}.tmp`,
   testAwardsChannelPath, `${testAwardsChannelPath}.tmp`,
+  testUserTimezonePath, `${testUserTimezonePath}.tmp`,
 ]) {
   if (fs.existsSync(p)) fs.unlinkSync(p);
 }

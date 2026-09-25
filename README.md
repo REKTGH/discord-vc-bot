@@ -105,7 +105,7 @@ In Discord, the bot should now show as online. Try it:
 - Type `omw, joining in 2 min` in a text channel the bot can see. It should react with a ⏰.
 - Join any voice channel within those 2 minutes. The bot should post a message saying whether you were early, on time, or late.
 - Type another plan, then reply `nvm` before joining. It should react with 🚫 instead, and stay quiet after.
-- Run `/leaderboard`, `/leaderboard-here`, `/track`, `/cancel`, `/uncancel`, `/log-here`, `/awards`, `/awards-here`, and `/help` to see the slash commands.
+- Run `/leaderboard`, `/leaderboard-here`, `/track`, `/cancel`, `/uncancel`, `/timezone`, `/log-here`, `/awards`, `/awards-here`, and `/help` to see the slash commands.
 
 (No-shows take up to `PLAN_EXPIRY_HOURS` — 12 hours by default — to trigger, so you won't see one during a quick local test unless you leave the bot running that long. That's expected; see [Customizing](#customizing) if you'd rather use a shorter window.)
 
@@ -162,7 +162,7 @@ sudo journalctl -f -u bot
 
 Press `Ctrl+C` to stop watching the log. A healthy start looks like `Logged in as...` followed by `Slash commands registered in N server(s).`
 
-**Because the server has a real disk, your data persists.** `results.json` and the channel settings for `/leaderboard-here`, `/log-here` and `/awards-here` all survive restarts and redeploys — you set those up once and they stay set.
+**Because the server has a real disk, your data persists.** `results.json`, the channel settings for `/leaderboard-here`, `/log-here` and `/awards-here`, and everyone's `/timezone` all survive restarts and redeploys — you set those up once and they stay set.
 
 > **Note on the built-in web server:** `src/index.js` starts a tiny HTTP server, but only if a `PORT` environment variable is set. That exists for app hosts whose free tiers sleep without web traffic. On this setup nothing sets `PORT`, so it never starts — you don't need an uptime pinger.
 
@@ -192,6 +192,11 @@ There are two exceptions to the "needs a join-intent phrase" rule, both for mess
 **Anyone can join someone else's plan.** Every tracked plan gets a ⏰ from the bot; tapping that same ⏰ signs you up for the same stated time, with your own verdict and your own no-show note. Tap it again to drop out — backing out of someone else's plan isn't flaking on your own, so it costs you nothing on the leaderboard. Use **`/track`** to start a plan for this on purpose (e.g. `/track when: 9pm`), which posts a public message for people to react to.
 
 If it understood you, it reacts with ⏰ on your message. When you join a voice channel afterward, it replies in that same text channel with the verdict. Run `/help` any time for a quick in-Discord reminder, and `/leaderboard` to see the server rankings.
+
+**Everyone sees times in their own timezone, and can be read in it too.** There are two halves to this:
+
+- **Times the bot posts** ("said 9:00 PM, joined 9:04 PM", no-show notes, `/track`) use Discord's timestamp format, so each person's Discord app shows them in *that person's* local time automatically. Nobody has to set anything up for this.
+- **Times you type** ("at 9", "9pm", "10:30") need the bot to know where *you* are, because Discord doesn't tell bots anyone's timezone. Run **`/timezone`** once and pick yours. Start typing a city ("New York", "London") or a common name ("EST", "pacific") and choose from the suggestions. After that, "at 9" from you means 9 o'clock your time. Anyone who hasn't set one is read in `BOT_TIMEZONE` (Pacific by default), exactly as before. Run `/timezone` with nothing filled in to check your current setting, or pick **Reset to the server default** to undo it. Relative times like "in 10" or "30" mean the same thing everywhere, so they aren't affected.
 
 **Show up 30+ minutes late and the bot gets a little petty about it.** Instead of the plain "late by N min" message, it posts a random passive-aggressive line — something like "Nice of you to join us in this century." — with the exact lateness and times still included afterward in parentheses, so nothing's actually lost. Change how late counts as "too late" with `ROAST_THRESHOLD_MINUTES` (default 30), or open `src/roastLines.js` and add/edit lines yourself — it's just a plain list of strings, no code experience needed (include the text `{minutes}` in a line and it'll be replaced with the actual number of minutes late). **This is the one message `/log-here` (below) doesn't redirect** — even on a server with a silent log channel set up, a roast always posts, and pings, right back in the channel it was announced in, since a roast that nobody sees kind of misses the point. Everything else (on time, early, and late-but-under-the-threshold) still goes to the log channel silently as normal.
 
@@ -273,7 +278,7 @@ All settings live in your `.env` file:
 | Variable | Default | What it does |
 |---|---|---|
 | `DISCORD_TOKEN` | *(required)* | Your bot's login token from Part 1. |
-| `BOT_TIMEZONE` | `America/Los_Angeles` | Timezone used to understand "at 9pm", to display times, and to decide where one calendar month ends and the next begins for monthly awards. [Full list of valid names](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones). |
+| `BOT_TIMEZONE` | `America/Los_Angeles` | The server's default timezone. Used to understand "at 9pm" from anyone who hasn't set their own with `/timezone`, and to decide where one calendar month ends and the next begins for the monthly leaderboard and awards. (Times the bot posts aren't affected — Discord shows those in each viewer's own time.) [Full list of valid names](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones). |
 | `GRACE_PERIOD_MINUTES` | `2` | +/- this many minutes still counts as "on time". |
 | `PLAN_EXPIRY_HOURS` | `12` | Hours after the *stated* join time before a never-followed-through-on plan is marked a no-show. |
 | `ROAST_THRESHOLD_MINUTES` | `30` | Minutes late (or more) before the join reply swaps in a random passive-aggressive line (`src/roastLines.js`) instead of the plain "late by N min" text. |
@@ -284,6 +289,7 @@ All settings live in your `.env` file:
 | `LIVE_LEADERBOARD_PATH` | `data/live-leaderboard.json` | Where the bot remembers the `/leaderboard-here` channel+message. Same deal as `DB_PATH`. |
 | `LOG_CHANNEL_PATH` | `data/log-channel.json` | Where the bot remembers the `/log-here` channel. Same deal as `DB_PATH`. |
 | `AWARDS_CHANNEL_PATH` | `data/awards-channel.json` | Where the bot remembers the `/awards-here` channel and which month it last posted. Same deal as `DB_PATH`. |
+| `USER_TIMEZONE_PATH` | `data/user-timezones.json` | Where the bot remembers each person's `/timezone`. Same deal as `DB_PATH`. |
 
 After changing `.env`, restart the bot (`Ctrl+C` then `npm start` again locally, or redeploy on your host) for changes to take effect.
 
@@ -292,7 +298,9 @@ After changing `.env`, restart the bot (`Ctrl+C` then `npm start` again locally,
 Worth knowing about, in case behavior ever looks surprising:
 
 - **Restarting loses in-progress plans.** A stated plan ("joining at 9") lives in memory until that person joins voice, cancels, or no-shows. If the bot restarts in between, that one plan (and its eventual no-show note, if it would have gotten one) is lost — the leaderboard history itself is safe in the data file, this only affects a plan caught mid-flight.
-- **One timezone for the whole server.** `BOT_TIMEZONE` applies to everyone. Fine for a friend group in the same region; not designed for a server spread across timezones.
+- **People have to set their own timezone once.** Discord never tells bots where a user is, so until someone runs `/timezone`, a clock time they type ("at 9") is read in `BOT_TIMEZONE`. Times the bot *posts* are always shown in each viewer's own time regardless.
+- **The month boundary is still server-wide.** The monthly leaderboard and awards roll over at midnight in `BOT_TIMEZONE` for everyone, because a month has to start at one moment for the whole server.
+- **Phone notifications may show raw timestamp code.** Posted times are Discord timestamp tags (like `<t:1790000000:t>`). They always show properly inside the Discord app, but a push-notification preview can show the raw tag instead.
 - **Any voice channel counts.** The bot doesn't try to figure out *which* voice channel someone named — joining any voice channel in the server resolves their plan.
 - **Natural language parsing isn't perfect.** It's tuned to avoid false positives (it won't fire on a random message that happens to contain a number), which means occasionally it'll miss an unusually-phrased plan. If you notice a common phrase it's not catching, that's an easy tweak to `src/timeParser.js`.
 - **Explicit weekday mentions are ignored on purpose** ("next Friday at 9pm") — this bot is meant for "joining very soon," not scheduling ahead.
@@ -338,6 +346,9 @@ Watch the log while it tries: `sudo journalctl -f -u bot`. The usual causes, in 
 - **A new dependency was added.** Run `npm install` again after `git pull` — a restart alone won’t fetch it.
 - **`Cannot find module`.** Confirm you are in the right folder and that `ls` shows `src/`, `package.json` and `node_modules/` side by side.
 - **`Failed to log in to Discord`.** The `.env` file on the server is missing or has a stale token. It is deliberately not in git, so it never arrives via `git pull` — check it with `cat .env` on the server.
+
+**The bot tracked "at 9" as the wrong 9 o'clock.**
+It read the time in the server's default timezone because you haven't told it yours. Run `/timezone`, pick your zone, then `/cancel` and restate the plan.
 
 **Tapping ⏰ on a plan does nothing.**
 Either the plan was posted before the bot last restarted (it only remembers plans in memory, so a restart forgets which messages were plans), or the bot is missing the **Add Reactions** / **Read Message History** permission in that channel.

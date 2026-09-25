@@ -57,6 +57,7 @@ discord-vc-bot/
 │   ├── liveLeaderboardStore.js  # JSON: guild → live-leaderboard channel+message
 │   ├── logChannelStore.js       # JSON: guild → /log-here channel
 │   ├── awardsChannelStore.js    # JSON: guild → /awards-here channel + last-announced month
+│   ├── userTimezoneStore.js     # JSON: user → own /timezone (see §7)
 │   ├── monthlyAwards.js         # monthly awards aggregation, embed, auto-post check
 │   └── commands/
 │       ├── leaderboard.js       # /leaderboard
@@ -188,7 +189,7 @@ Either way, the repo must be uploaded to GitHub **flat** — `src/`, `test/`, `p
 ### 4.2 Documented, deliberate limitations (not bugs — see section 3 for why each exists)
 
 - Restarting the bot loses any in-progress (announced-but-not-yet-joined) plan.
-- One `BOT_TIMEZONE` for the whole server — not designed for a server spread across timezones.
+- ~~One `BOT_TIMEZONE` for the whole server~~ — superseded by per-person timezones, see §7.
 - Any voice channel counts as "joining" — the bot doesn't check which one was named.
 - Natural-language parsing is tuned against false positives, so it occasionally misses an unusually-phrased plan.
 - No-show notes can land up to ~5 minutes after `PLAN_EXPIRY_HOURS` actually elapses (5-minute check interval).
@@ -265,3 +266,20 @@ One permission note: `resolveAmbiguity` withdraws only the **bot's own** ⏳/�
 - The three v16 §4.3 questions are **still unanswered** and were not touched: Avg Time Late semantics (late-only vs overall), whether the roast tone/threshold suits the server, and dark-theme legibility. Ask before changing any of them.
 - **Nothing in v17 has been exercised against a live Discord server yet.** All 203 tests pass and every command builds a valid payload, but the reaction flows in particular (partials, permissions, the ⏳/🕐 tidy-up) can only really be confirmed by running it. Deploy and try each one.
 - The bot's role needs **Add Reactions** and **Read Message History** for shared plans to work, on top of the **Attach Files** permission v16 already required.
+
+---
+
+## 7. Per-person timezones (2026-09-25)
+
+Replaces the "one `BOT_TIMEZONE` for the whole server" limitation in §4.2. Two independent halves:
+
+1. **Display — no setup.** `verdict.formatClock()` now returns a Discord timestamp tag (`<t:UNIX:t>`) instead of a Pacific-time string. Every viewer's client renders it in their own zone. All clock times the bot posts (verdicts, no-shows, `/track`, `/cancel`, `/uncancel`) go through that one function.
+2. **Parsing — opt-in via `/timezone`.** `userTimezoneStore.js` maps **userId → IANA zone** (per user, not per guild — where someone lives doesn't change between servers) in `data/user-timezones.json`. `resolve(userId)` falls back to `config.timezone`. The three places that read a time — `messageHandler` (plans and the ⏳/🕐 bare-number question) and `/track` — pass the author's zone to `parseJoinTime`, which already took a `timezone` option, so `timeParser.js` is unchanged. Unlike the channel stores, this one caches in memory, since it's consulted on every chat message.
+
+`/timezone` has autocomplete (`Intl.supportedValuesOf('timeZone')`, common zones when empty, a plain-English alias table like "EST"/"pacific", and a **Reset** choice). That needed an `isAutocomplete()` branch in `index.js`'s `InteractionCreate` handler — the first command to use one.
+
+**Deliberately still server-wide:** the month boundary for the monthly leaderboard and awards is `BOT_TIMEZONE`, because a month has to start at one moment for everyone. Relative times ("in 10", bare "30") are unaffected by any zone.
+
+**Shared plans** hold joiners to the same *instant*, which was already true; with the display change each joiner now sees it in their own local time.
+
+Tests: 211 → **225**.

@@ -7,6 +7,7 @@ const planTracker = require('./planTracker');
 const { recordResult } = require('./db');
 const liveLeaderboard = require('./liveLeaderboard');
 const { WATCH_EMOJI, MINUTES_EMOJI, CLOCK_EMOJI } = require('./reactionHandler');
+const userTimezoneStore = require('./userTimezoneStore');
 
 async function react(message, emoji) {
   try {
@@ -21,7 +22,10 @@ async function handleMessage(message) {
   if (!message.guild) return; // ignore DMs
   if (config.allowedChannelIds.length && !config.allowedChannelIds.includes(message.channelId)) return;
 
-  const parsed = parseJoinTime(message.content, { timezone: config.timezone, referenceDate: new Date() });
+  // "at 9" means 9 o'clock where the person saying it is - their /timezone
+  // if they've set one, the server default otherwise.
+  const timezone = userTimezoneStore.resolve(message.author.id);
+  const parsed = parseJoinTime(message.content, { timezone, referenceDate: new Date() });
 
   if (parsed) {
     const username = message.member?.displayName || message.author.username;
@@ -57,7 +61,7 @@ async function handleMessage(message) {
   // often enough to be worth one tap. Offer both and let them pick; nothing is
   // tracked until they do. See reactionHandler.decideAmbiguityAnswer.
   const ambiguous = parseBareNumberAmbiguity(message.content, {
-    timezone: config.timezone,
+    timezone,
     referenceDate: new Date(),
   });
   if (ambiguous) {

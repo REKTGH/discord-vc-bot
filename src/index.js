@@ -47,6 +47,7 @@ const commandFiles = [
   require('./commands/logHere'),
   require('./commands/awards'),
   require('./commands/awardsHere'),
+  require('./commands/timezone'),
 ];
 client.commands = new Collection();
 for (const cmd of commandFiles) client.commands.set(cmd.data.name, cmd);
@@ -61,7 +62,7 @@ async function registerCommandsForGuild(guild) {
 
 client.once(Events.ClientReady, async (readyClient) => {
   console.log(`Logged in as ${readyClient.user.tag}`);
-  console.log(`Timezone: ${config.timezone} | Grace period: ${config.gracePeriodMinutes}m | No-show window: ${config.planExpiryHours}h`);
+  console.log(`Default timezone: ${config.timezone} | Grace period: ${config.gracePeriodMinutes}m | No-show window: ${config.planExpiryHours}h`);
   for (const guild of readyClient.guilds.cache.values()) {
     await registerCommandsForGuild(guild);
   }
@@ -90,6 +91,14 @@ client.on(Events.VoiceStateUpdate, (oldState, newState) => {
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
+  // Suggestions shown while someone is still typing an option (e.g. the zone
+  // list for /timezone). Nothing to report back to the user if one fails.
+  if (interaction.isAutocomplete()) {
+    const command = client.commands.get(interaction.commandName);
+    if (!command?.autocomplete) return;
+    await command.autocomplete(interaction).catch((err) => console.error(`Error autocompleting /${interaction.commandName}:`, err));
+    return;
+  }
   if (!interaction.isChatInputCommand()) return;
   const command = client.commands.get(interaction.commandName);
   if (!command) return;

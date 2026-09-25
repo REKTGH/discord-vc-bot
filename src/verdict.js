@@ -26,12 +26,11 @@ function classify(diffMs) {
   return { status: 'on_time', emoji: '✅', label: 'on time' };
 }
 
+// A Discord timestamp tag rather than a formatted string: each viewer's own
+// Discord app renders it as a clock time in *their* timezone, so a plan read
+// in New York and in Los Angeles shows the right local time to both.
 function formatClock(date) {
-  return date.toLocaleString('en-US', {
-    timeZone: config.timezone,
-    hour: 'numeric',
-    minute: '2-digit',
-  });
+  return `<t:${Math.floor(date.getTime() / 1000)}:t>`;
 }
 
 // Whether this verdict is late enough to earn a roast line rather than the

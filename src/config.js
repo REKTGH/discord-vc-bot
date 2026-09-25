@@ -13,9 +13,10 @@ function parseIntEnv(name, fallback) {
 const config = {
   token: process.env.DISCORD_TOKEN,
 
-  // IANA timezone used to interpret "at 9pm" style messages and to display
-  // times back to the channel. One timezone for the whole bot/server — good
-  // enough for a friend group in one place; see README for how to change it.
+  // IANA timezone used to interpret "at 9pm" style messages from anyone who
+  // hasn't set their own with /timezone, and to decide where one calendar
+  // month ends for the monthly leaderboard and awards. Times shown in chat
+  // don't use this - Discord renders them in each viewer's own timezone.
   timezone: process.env.BOT_TIMEZONE || 'America/Los_Angeles',
 
   // +/- this many minutes counts as "on time" rather than early/late.
@@ -72,6 +73,12 @@ const config = {
   // announced there. Separate file for the same reason as above.
   awardsChannelPath:
     process.env.AWARDS_CHANNEL_PATH || require('path').join(__dirname, '..', 'data', 'awards-channel.json'),
+
+  // JSON file that remembers each person's own timezone (set via /timezone),
+  // used to read "at 9" as 9 o'clock where *they* are. Separate file for the
+  // same reason as above.
+  userTimezonePath:
+    process.env.USER_TIMEZONE_PATH || require('path').join(__dirname, '..', 'data', 'user-timezones.json'),
 };
 
 module.exports = config;

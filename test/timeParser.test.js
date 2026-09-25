@@ -84,6 +84,22 @@ check('on in 13.5 hours is out of range, not 13 minutes', 'on in 13.5 hours', mo
 check('in 2h is exactly two hours out', 'joining in 2h', morning, '13:00');
 check('in 11h is still within range', 'on in 11h', morning, '22:00');
 check('in 1h30m', 'on in 1h30m', morning, '12:30');
+
+// Per-person timezones (/timezone): the same words mean a different instant
+// depending on whose clock "9pm" is. `morning` is 2 PM in New York.
+ok('"at 9pm" from someone in New York is 9 PM New York time', () => {
+  const ny = parseJoinTime('joining at 9pm', { timezone: 'America/New_York', referenceDate: morning });
+  assert.strictEqual(ny.targetTime.toISOString(), '2026-08-18T01:00:00.000Z');
+});
+ok('a bare "at 9" is resolved against the speaker\'s own clock too', () => {
+  const ny = parseJoinTime('joining at 9', { timezone: 'America/New_York', referenceDate: morning });
+  assert.strictEqual(ny.targetTime.toISOString(), '2026-08-18T01:00:00.000Z');
+});
+ok('relative times ("in 10") are the same instant whatever the timezone', () => {
+  const la = parseJoinTime('omw in 10', { timezone: TZ, referenceDate: morning });
+  const tokyo = parseJoinTime('omw in 10', { timezone: 'Asia/Tokyo', referenceDate: morning });
+  assert.strictEqual(la.targetTime.getTime(), tokyo.targetTime.getTime());
+});
 check('bot noise: pure emoji', '😀😀😀', morning, null);
 
 console.log('\n=== "be on in N" and other bare-number-implies-minutes phrasing ===');

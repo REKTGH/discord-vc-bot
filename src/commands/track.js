@@ -13,6 +13,7 @@ const { parseJoinTime } = require('../timeParser');
 const planTracker = require('../planTracker');
 const { formatClock } = require('../verdict');
 const { WATCH_EMOJI } = require('../reactionHandler');
+const userTimezoneStore = require('../userTimezoneStore');
 
 const data = new SlashCommandBuilder()
   .setName('track')
@@ -32,7 +33,8 @@ async function execute(interaction) {
   // intent phrase is prepended because the parser requires one, and choosing
   // to run this command IS the intent.
   const parsed = parseJoinTime(`joining ${when}`, {
-    timezone: config.timezone,
+    // Same per-person reading as a typed plan - see messageHandler.js.
+    timezone: userTimezoneStore.resolve(interaction.user.id),
     referenceDate: new Date(),
   });
 

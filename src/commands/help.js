@@ -30,12 +30,15 @@ async function execute(interaction) {
         "your message instead of guessing. Tap whichever you meant — nothing is tracked until you do.\n\n" +
         `On time = within ${config.gracePeriodMinutes} minutes of what you said. ` +
         `Plans expire after ${config.planExpiryHours} hours if you never join.\n\n` +
+        '**Timezones:** times I post show in your own local time automatically. For me to read *your* "at 9" ' +
+        `correctly, run \`/timezone\` once and pick where you are — until you do, I read clock times in ${config.timezone}.\n\n` +
         'Changed your mind, or did I get it wrong? Say "nevermind"/"nvm", or run `/cancel` — either erases your pending plan and skips the no-show note. Only "nevermind"/"nvm" counts as a cancellation on `/leaderboard`, though - `/cancel` is for fixing my mistakes, so it doesn\'t count against you. Said "nvm" to a friend and I took it personally? `/uncancel` puts it right back.\n\n' +
         '`/leaderboard` — punctuality ranking for this month, latest to least late. Add `scope: All time` for the full history.\n' +
         '`/leaderboard-here` — turn this channel into a live, self-updating leaderboard (needs Manage Server permission). It starts a fresh one each month and leaves the old one in place.\n' +
         '`/track` — announce a plan on purpose, and let others tap ⏰ to be tracked with you.\n' +
         '`/cancel` — erase your own pending plan if I tracked something wrong.\n' +
         '`/uncancel` — undo an accidental "nvm" and put your plan back.\n' +
+        '`/timezone` — tell me your timezone, so "at 9" means 9 o\'clock where you are.\n' +
         '`/log-here` — send voice-join messages to this channel instead, without pinging anyone (needs Manage Server permission).\n' +
         '`/awards` — show punctuality awards (most late, most time late, most cancels) for the most recently completed month, right now.\n' +
         '`/awards-here` — post those same awards automatically in this channel at the start of each month (needs Manage Server permission).'
